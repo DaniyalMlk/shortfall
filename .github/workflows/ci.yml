@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    name: Tests on Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Test
+        run: pytest -q
+
+  checks:
+    name: Types and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Type check
+        run: mypy --strict
+      - name: Lint
+        run: ruff check .
+
+  package:
+    name: Wheel installs and runs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+      - name: Install the wheel into a clean environment
+        run: |
+          python -m venv /tmp/check
+          /tmp/check/bin/pip install dist/*.whl
+      - name: The installed package estimates something
+        # A wheel that imports but cannot produce a number is not a working
+        # library, so the check runs an estimate end to end and asserts an
+        # identity that has to hold: shrinkage preserves the variances.
+        run: |
+          /tmp/check/bin/python - <<'PY'
+          import random
+          from shortfall import Panel, ledoit_wolf, sample_covariance
+
+          rng = random.Random(0)
+          factor = [rng.gauss(0.0, 0.01) for _ in range(40)]
+          panel = Panel.from_columns(
+              {f"a{i}": [factor[t] + rng.gauss(0.0, 0.008) for t in range(40)] for i in range(6)}
+          )
+          result = ledoit_wolf(panel)
+          unbiased = sample_covariance(panel)
+          assert 0.0 <= result.intensity <= 1.0, result.intensity
+          for i in range(6):
+              assert abs(result.matrix[i][i] - unbiased[i][i]) < 1e-20
+          assert result.diagnostics.positive_semidefinite
+          print(f"shrinkage intensity {result.intensity:.4f}, variances preserved")
+          PY

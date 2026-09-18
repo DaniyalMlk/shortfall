@@ -9,13 +9,13 @@ does not. A test that only agrees with the code it tests is not evidence.
 
 ## Phase 1 — Return series and covariance
 
-- [ ] Return series: construction, alignment across assets, simple and log returns
-- [ ] Annualisation with an explicit periods-per-year, never an assumed 252
-- [ ] Sample covariance and correlation, with the unbiased and maximum-likelihood forms
-- [ ] Ledoit-Wolf shrinkage towards a constant-correlation target
-- [ ] Shrinkage intensity reported, not hidden, with the target it shrank towards
-- [ ] Nearest positive semi-definite repair for a matrix that is not one
-- [ ] Condition number and eigenvalue diagnostics on any estimated matrix
+- [x] Return series: construction, alignment across assets, simple and log returns
+- [x] Annualisation with an explicit periods-per-year, never an assumed 252
+- [x] Sample covariance and correlation, with the unbiased and maximum-likelihood forms
+- [x] Ledoit-Wolf shrinkage towards a constant-correlation target
+- [x] Shrinkage intensity reported, not hidden, with the target it shrank towards
+- [x] Nearest positive semi-definite repair for a matrix that is not one
+- [x] Condition number and eigenvalue diagnostics on any estimated matrix
 
 ## Phase 2 — Parametric risk
 
