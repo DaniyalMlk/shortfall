@@ -19,11 +19,11 @@ does not. A test that only agrees with the code it tests is not evidence.
 
 ## Phase 2 — Parametric risk
 
-- [ ] Normal value at risk and expected shortfall in closed form
-- [ ] Student-t value at risk and expected shortfall, with the tail scaling right
-- [ ] Portfolio variance from weights and a covariance matrix
-- [ ] Cornish-Fisher expansion, refusing the parameters where it is not monotone
-- [ ] Sign and tail conventions stated once and enforced everywhere
+- [x] Normal value at risk and expected shortfall in closed form
+- [x] Student-t value at risk and expected shortfall, with the tail scaling right
+- [x] Portfolio variance from weights and a covariance matrix
+- [x] Cornish-Fisher expansion, refusing the parameters where it is not monotone
+- [x] Sign and tail conventions stated once and enforced everywhere
 
 ## Phase 3 — Historical and simulated risk
 

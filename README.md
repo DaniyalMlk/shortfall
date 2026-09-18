@@ -9,8 +9,9 @@ when it is working from too little data. This library is built around those
 three, and the numerics are checked against closed forms and published results
 rather than against themselves.
 
-`ROADMAP.md` says what is built and what is not. Phase 1 — return series,
-covariance estimation and the diagnostics on it — is done.
+`ROADMAP.md` says what is built and what is not. Phases 1 and 2 — return
+series, covariance estimation and its diagnostics, and parametric value at risk
+and expected shortfall — are done.
 
 ## Using it
 
@@ -24,6 +25,19 @@ estimate.intensity              # how far it was pulled towards the target
 estimate.diagnostics.condition_number
 estimate.diagnostics.numerically_singular
 panel["AAPL"].annualised_volatility(DAILY_TRADING)
+```
+
+```python
+from shortfall import Distribution, portfolio_risk
+
+risk = portfolio_risk(
+    [0.6, 0.4], estimate.matrix,
+    confidence=0.99, distribution=Distribution.STUDENT_T, degrees=5,
+)
+risk.value_at_risk        # a positive loss: 0.023 is a 2.3% loss
+risk.expected_shortfall   # never smaller than the value at risk
+risk.quantile             # the same number, signed, for the other convention
+risk.scaled_to(10)        # ten periods, under the square-root-of-time rule
 ```
 
 Dates that do not line up are handled by an inner join:
@@ -62,6 +76,39 @@ sample was informative; one of 0.9 says the answer is mostly the prior and the
 data contributed little. A caller who cannot see which of those happened cannot
 tell a risk estimate from an assumption, so `Shrunk` carries the intensity, the
 unclamped optimum, the sample, the target, and the diagnostics on the result.
+
+### Risk numbers carry their own conventions
+
+Three things go wrong with a value at risk, none visible in the number.
+
+**Sign.** It is a loss, and a loss is a negative return, so whether an
+implementation returns `0.023` or `-0.023` for the same portfolio is a coin
+flip. Here it is a positive loss, and the signed return quantile is on the
+result as well, so nothing has to be inferred.
+
+**Which tail.** `confidence=0.99` means the 1% tail. The two are complements,
+and an implementation that takes one while documenting the other is wrong by an
+amount that grows as the tail thins.
+
+**Normal tails.** A Gaussian understates the tail of essentially every return
+series. The Student-t is offered with the scaling that a raw `t` needs — its
+variance is `v/(v-2)`, not 1, so an unscaled one is 22% too wide at five degrees
+of freedom, which is more than the heavy tail it was reached for is worth.
+
+Cornish-Fisher has a sharper failure than either. Outside a bounded region of
+the skewness-kurtosis plane its corrected quantile stops increasing with the
+probability, which means it is not a quantile function and nothing read off it
+is a quantile of anything. That is checked and refused — over the tail the
+number is actually read from, rather than symmetrically around zero, because the
+cubic coefficient is `-S^2/18` and a symmetric check therefore refuses every
+pure-skewness correction there is. It would be the wrong question, not a
+stricter one.
+
+Its expected shortfall is a closed form rather than a quadrature. Written as a
+cubic in `z`, the tail integral against the normal density is exactly the four
+tail moments of the normal, each of which is exact — and a quadrature over a
+tail reaching to minus infinity is precisely where numerical integration is
+least reliable.
 
 ### Conventions are arguments, not assumptions
 
@@ -118,7 +165,7 @@ the criterion is set by.
 
 ```bash
 pip install -e ".[dev]"
-pytest          # 126 tests
+pytest          # 272 tests
 mypy --strict
 ruff check .
 ```
@@ -133,6 +180,12 @@ exists, and against identities that hold whatever the input where one does not: 
 2x2 matrix has exact eigenvalues, a matrix built as `Q diag(w) Q^T` has known
 ones, and the eigenvalues must reproduce the trace and the determinant, which are
 computed without touching the solver.
+
+Every expected shortfall closed form is integrated a second time by a route that
+shares none of its algebra, and they agree to 1e-10 or better. The quadrature
+substitutes `x = q - tan(theta)` to map the infinite tail onto a finite interval;
+truncating it at a large negative number instead loses real mass at three degrees
+of freedom, in the second decimal.
 
 Where there is no closed form at all — the shrinkage intensity — the tests check
 what the theory predicts the estimator will *do*: shrink hard when the target
