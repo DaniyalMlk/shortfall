@@ -27,11 +27,11 @@ does not. A test that only agrees with the code it tests is not evidence.
 
 ## Phase 3 — Historical and simulated risk
 
-- [ ] Empirical quantiles with the interpolation method named
-- [ ] Historical value at risk and expected shortfall over a return series
-- [ ] Bootstrap confidence intervals for both
-- [ ] Filtered historical simulation over a volatility model
-- [ ] Coherence checks: expected shortfall is subadditive where value at risk is not
+- [x] Empirical quantiles with the interpolation method named
+- [x] Historical value at risk and expected shortfall over a return series
+- [x] Bootstrap confidence intervals for both
+- [x] Filtered historical simulation over a volatility model
+- [x] Coherence checks: expected shortfall is subadditive where value at risk is not
 
 ## Phase 4 — Risk contributions
 

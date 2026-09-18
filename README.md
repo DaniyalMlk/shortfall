@@ -9,9 +9,9 @@ when it is working from too little data. This library is built around those
 three, and the numerics are checked against closed forms and published results
 rather than against themselves.
 
-`ROADMAP.md` says what is built and what is not. Phases 1 and 2 — return
-series, covariance estimation and its diagnostics, and parametric value at risk
-and expected shortfall — are done.
+`ROADMAP.md` says what is built and what is not. Phases 1 to 3 — return series,
+covariance estimation and its diagnostics, parametric value at risk and expected
+shortfall, and historical and filtered historical simulation — are done.
 
 ## Using it
 
@@ -38,6 +38,17 @@ risk.value_at_risk        # a positive loss: 0.023 is a 2.3% loss
 risk.expected_shortfall   # never smaller than the value at risk
 risk.quantile             # the same number, signed, for the other convention
 risk.scaled_to(10)        # ten periods, under the square-root-of-time rule
+```
+
+The same numbers taken from the sample instead of from an assumed shape, with an
+interval saying how much sample there was:
+
+```python
+from shortfall import bootstrap_interval, filtered_historical_risk, historical_risk
+
+historical_risk(returns, confidence=0.99).effective_sample   # 2.5, not 250
+bootstrap_interval(returns, confidence=0.99).relative_width  # how wide that makes it
+filtered_historical_risk(returns).scaling                    # today against the window
 ```
 
 Dates that do not line up are handled by an inner join:
@@ -110,6 +121,58 @@ tail moments of the normal, each of which is exact — and a quadrature over a
 tail reaching to minus infinity is precisely where numerical integration is
 least reliable.
 
+### Expected shortfall is subadditive and value at risk is not
+
+There is a worked counterexample in the tests, stated as exact frequencies
+rather than simulated. Two independent bonds, each half the book, each
+defaulting with probability 4%. At 95% confidence:
+
+| | each half alone | combined | sum of parts |
+| --- | --- | --- | --- |
+| value at risk | −0.005 (a *gain*) | **0.495** | −0.010 |
+| expected shortfall | 0.399 | **0.511** | 0.798 |
+
+Alone, each half's 4% default chance sits inside the 5% tail, so its value at
+risk is a gain. Combined, the 7.84% chance that at least one defaults reaches
+into the tail, and value at risk becomes a loss of nearly half the book —
+diversifying made the measured risk worse. Expected shortfall on the same
+positions is comfortably below the sum of its parts.
+
+That is not a curiosity. A risk limit written in value at risk can be satisfied
+by splitting a book into pieces that each sit just inside it while the whole sits
+well outside, and it is the concrete reason the Basel framework moved to
+expected shortfall.
+
+The test also earned its place by finding a bug. It reported expected shortfall
+violating a property expected shortfall provably satisfies — which is a statement
+about the estimator, not about the data. The estimator had been averaging every
+observation at or below the quantile, which is the obvious implementation and is
+wrong whenever the quantile ties with a value many observations share. On the
+counterexample, where most periods are identical, it averaged nearly the whole
+sample and turned a tail mean of −0.399 into −0.0152.
+
+The tail is now the exact sample estimator, which weights the partial
+observation: at 99% over 250 returns the tail is 2.5 observations, two counting
+fully and the third counting half.
+
+### Historical estimates say how little data they had
+
+A 99% value at risk over 250 daily returns is computed from two and a half
+observations. The point estimate cannot say so, so `effective_sample` does, and
+`bootstrap_interval` puts a number on what it costs.
+
+Filtered historical simulation divides each past return by the volatility
+estimated at the time it happened and multiplies by today's, keeping the
+empirical shape while making the scale current. The volatility estimate uses
+returns strictly *before* each point: one that included the current return would
+divide it by a volatility that knew about it, flattening the standardised series
+and making the filtered tail far too thin.
+
+The identity that holds the construction together is that a constant volatility
+reduces the filtered estimate to the plain one bit for bit, since the two
+rescalings cancel. It is a test, because anything else means the filter is being
+applied and removed in different units and nothing else would reveal it.
+
 ### Conventions are arguments, not assumptions
 
 Two decisions are invisible in the output, which is exactly why they are made
@@ -165,7 +228,7 @@ the criterion is set by.
 
 ```bash
 pip install -e ".[dev]"
-pytest          # 272 tests
+pytest          # 355 tests
 mypy --strict
 ruff check .
 ```
