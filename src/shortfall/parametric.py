@@ -67,6 +67,11 @@ class Distribution(str, Enum):
     NORMAL = "normal"
     STUDENT_T = "student-t"
     CORNISH_FISHER = "cornish-fisher"
+    #: Not a distributional assumption at all — the sample itself. Carried in
+    #: the same enumeration so a historical and a parametric estimate can be put
+    #: side by side, which is the comparison worth making: a large gap between
+    #: them is the shape assumption being told it is wrong.
+    HISTORICAL = "historical"
 
 
 class NotAQuantileFunction(ValueError):
