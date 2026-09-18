@@ -33,10 +33,18 @@ Vector = list[float]
 #: a working limit.
 MAX_SWEEPS: Final = 50
 
-#: Off-diagonal Frobenius mass, relative to the whole matrix, below which the
-#: matrix counts as diagonal. Squared quantities are compared, so this is near
-#: the square root of the double-precision epsilon.
-CONVERGED: Final = 1e-15
+#: Relative size, in magnitude, that a remaining off-diagonal entry may have.
+#: Near the double-precision epsilon, which is as tight as the arithmetic allows.
+RESIDUAL: Final = 1e-14
+
+#: The same tolerance expressed in the units the sweep test is written in.
+#: Frobenius masses are sums of *squares*, so the threshold on them is the
+#: square of the threshold on magnitudes. Getting this wrong is easy and quiet:
+#: a threshold of 1e-15 on the squared mass reads as tight and actually permits
+#: off-diagonal entries of 3e-8, which leaves the eigenvalues accurate — the
+#: diagonal has converged — while the eigenvectors are only good to eight
+#: digits, and a reconstruction test does not notice.
+CONVERGED: Final = RESIDUAL * RESIDUAL
 
 
 class NotSymmetric(ValueError):
@@ -72,15 +80,20 @@ def dimension(matrix: Matrix) -> int:
 def check_symmetric(matrix: Matrix, *, tolerance: float = 1e-12) -> int:
     """Return the dimension of ``matrix``, raising unless it is symmetric.
 
-    The comparison is relative to the size of the entries. An absolute tolerance
-    would pass a covariance matrix of daily returns — entries around 1e-4 — while
-    failing the same matrix annualised, which is the same matrix.
+    The comparison is relative to the largest entry in the *whole* matrix, so
+    the verdict does not change when the matrix is rescaled. A daily covariance
+    has entries around 1e-4 and the same matrix annualised has entries around
+    1e-2; they are the same matrix and must get the same answer, which an
+    absolute tolerance — or a relative one with a floor under it — would not
+    give them.
     """
     size = dimension(matrix)
+    scale = max(abs(matrix[i][j]) for i in range(size) for j in range(size))
+    if scale == 0.0:
+        return size
     for i in range(size):
         for j in range(i + 1, size):
             upper, lower = matrix[i][j], matrix[j][i]
-            scale = max(abs(upper), abs(lower), 1.0)
             if abs(upper - lower) > tolerance * scale:
                 raise NotSymmetric(
                     f"matrix[{i}][{j}] is {upper!r} but matrix[{j}][{i}] is {lower!r}"
@@ -310,6 +323,7 @@ def matrix_vector(matrix: Matrix, vector: Vector) -> Vector:
 
 __all__ = [
     "MAX_SWEEPS",
+    "RESIDUAL",
     "Matrix",
     "NotPositiveDefinite",
     "NotSquare",
