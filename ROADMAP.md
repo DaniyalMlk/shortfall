@@ -56,7 +56,7 @@ does not. A test that only agrees with the code it tests is not evidence.
 
 ## Phase 7 — Interface, documentation and continuous integration
 
-- [ ] Command line entry point over a returns file
-- [ ] Worked example reproducing a published figure end to end
-- [ ] README covering the conventions and the design decisions
-- [ ] Continuous integration across supported Python versions with types and lint
+- [x] Command line entry point over a returns file
+- [x] Worked example reproducing a published figure end to end
+- [x] README covering the conventions and the design decisions
+- [x] Continuous integration across supported Python versions with types and lint
