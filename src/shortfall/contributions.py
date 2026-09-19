@@ -46,7 +46,7 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from .linalg import Matrix, dimension, eigh, matrix_vector, quadratic_form
+from .linalg import Matrix, cholesky, dimension, eigh, matrix_vector, quadratic_form
 from .parametric import Distribution, Risk, parametric_risk
 from .series import Panel
 
@@ -474,7 +474,10 @@ def risk_parity(
 
         f(x) = (1/2) x' S x - sum_i b_i log(x_i)
 
-    over positive ``x``, which is strictly convex for a positive definite ``S``,
+    over positive ``x``, which is strictly convex for a positive definite ``S``
+    — a requirement checked rather than assumed, since the iteration terminates
+    happily on an indefinite matrix and returns weights for a problem that has
+    no solution —
     and whose stationary condition ``x_i (S x)_i = b_i`` is the risk parity
     condition up to scale. The logarithmic barrier keeps every weight positive
     without a constraint, and the solution is normalised to sum to one at the
@@ -497,6 +500,12 @@ def risk_parity(
                 "parity needs every asset to carry some risk, since an asset with "
                 "none would take an unbounded weight to reach its budget"
             )
+    # The objective is strictly convex only for a positive definite matrix, and
+    # this is where that is established rather than assumed. On an indefinite
+    # matrix the coordinate updates still produce positive numbers and the
+    # iteration still terminates, so the failure is silent: the weights come
+    # back looking like an answer to a problem that has none.
+    cholesky(covariance)
     if budgets is None:
         shares = [1.0 / size] * size
     else:
@@ -696,8 +705,12 @@ def principal_bets(weights: Sequence[float], covariance: Matrix) -> PrincipalBet
         # carries. Negative eigenvalues can only come from a matrix that is not
         # positive semi-definite; they are floored rather than propagated into a
         # negative "share".
+        # ``eigh`` returns eigenvectors as rows, so the vector for values[k] is
+        # vectors[k] and not the k-th column. Indexing it the other way is a
+        # silent transpose: it still produces a plausible non-negative
+        # distribution summing to one, and it is wrong about every component.
         loading = math.fsum(
-            vectors[row][k] * weights[row] for row in range(size)
+            vectors[k][row] * weights[row] for row in range(size)
         )
         carried = max(values[k], 0.0) * loading * loading
         contributions.append(carried)
