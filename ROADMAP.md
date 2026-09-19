@@ -42,10 +42,10 @@ does not. A test that only agrees with the code it tests is not evidence.
 
 ## Phase 5 — Factor models
 
-- [ ] Factor exposures by regression, with residual diagnostics
-- [ ] Specific risk and the factor-implied covariance
-- [ ] Risk attributed between factor and specific components
-- [ ] Attribution reconciles to the total, as an identity the tests assert
+- [x] Factor exposures by regression, with residual diagnostics
+- [x] Specific risk and the factor-implied covariance
+- [x] Risk attributed between factor and specific components
+- [x] Attribution reconciles to the total, as an identity the tests assert
 
 ## Phase 6 — Path statistics
 
