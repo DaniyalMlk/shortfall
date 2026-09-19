@@ -49,10 +49,10 @@ does not. A test that only agrees with the code it tests is not evidence.
 
 ## Phase 6 — Path statistics
 
-- [ ] Drawdown series, maximum drawdown, and the dates it ran between
-- [ ] Underwater duration and time to recovery
-- [ ] Calmar, Sortino and the ulcer index, each with its denominator stated
-- [ ] Rolling windows over any of the above
+- [x] Drawdown series, maximum drawdown, and the dates it ran between
+- [x] Underwater duration and time to recovery
+- [x] Calmar, Sortino and the ulcer index, each with its denominator stated
+- [x] Rolling windows over any of the above
 
 ## Phase 7 — Interface, documentation and continuous integration
 
