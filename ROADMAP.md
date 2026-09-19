@@ -35,10 +35,10 @@ does not. A test that only agrees with the code it tests is not evidence.
 
 ## Phase 4 — Risk contributions
 
-- [ ] Marginal and component contributions under the Euler allocation
-- [ ] Contributions sum to the total risk, as an identity the tests assert
-- [ ] Risk parity weights, with the convergence evidence reported
-- [ ] Diversification ratio and effective number of bets
+- [x] Marginal and component contributions under the Euler allocation
+- [x] Contributions sum to the total risk, as an identity the tests assert
+- [x] Risk parity weights, with the convergence evidence reported
+- [x] Diversification ratio and effective number of bets
 
 ## Phase 5 — Factor models
 
