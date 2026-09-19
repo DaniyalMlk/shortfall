@@ -321,6 +321,147 @@ def matrix_vector(matrix: Matrix, vector: Vector) -> Vector:
     return [sum(row[j] * vector[j] for j in range(size)) for row in matrix]
 
 
+# -- least squares -----------------------------------------------------------
+
+
+class RankDeficient(ValueError):
+    """The design matrix has linearly dependent columns.
+
+    Which means the regression has no unique answer: some combination of the
+    columns is exactly zero, so a coefficient vector can be shifted along it
+    without changing a single fitted value. Any particular answer a solver
+    returns for such a design is an artefact of how it rounds.
+    """
+
+
+def solve_upper(upper: Matrix, target: Vector) -> Vector:
+    """Solve ``R x = b`` for upper-triangular ``R`` by back substitution."""
+    size = len(target)
+    out = [0.0] * size
+    for i in reversed(range(size)):
+        total = target[i] - math.fsum(upper[i][j] * out[j] for j in range(i + 1, size))
+        if upper[i][i] == 0.0:
+            raise RankDeficient(f"the triangular factor has a zero at position {i}")
+        out[i] = total / upper[i][i]
+    return out
+
+
+def least_squares(design: Matrix, target: Vector) -> tuple[Vector, Matrix]:
+    """Minimise ``||design @ x - target||`` by Householder QR.
+
+    Returns the coefficients and the upper-triangular factor ``R``, which is
+    what a caller needs for standard errors: ``(X'X)^-1`` is ``R^-1 R^-T``,
+    obtainable from ``R`` alone without ever forming ``X'X``.
+
+    **Why not the normal equations.** Solving ``X'X b = X'y`` is three lines
+    with the Cholesky factorisation already in this module, and it is the wrong
+    method here. Forming ``X'X`` squares the condition number of ``X``, so a
+    design that is merely awkward at a condition number of 1e8 — perfectly
+    ordinary for factor returns, which are correlated with each other by
+    construction and often nearly collinear — becomes numerically singular at
+    1e16 and the factorisation either fails or returns digits that are all
+    noise. Householder QR works on ``X`` directly and its accuracy depends on
+    the condition number itself rather than its square.
+
+    The cost is a constant factor of about two in arithmetic, on problems whose
+    size is the number of factors. That is not a trade worth thinking about.
+    """
+    rows = len(design)
+    if rows == 0:
+        raise ValueError("a least squares problem needs at least one observation")
+    columns = len(design[0])
+    for index, row in enumerate(design):
+        if len(row) != columns:
+            raise ValueError(
+                f"design row {index} has {len(row)} entries against {columns} in the "
+                "first; the design matrix must be rectangular"
+            )
+    if len(target) != rows:
+        raise ValueError(
+            f"{len(target)} targets against {rows} design rows; they must agree"
+        )
+    if rows < columns:
+        raise RankDeficient(
+            f"{rows} observations cannot determine {columns} coefficients; the design "
+            "has more unknowns than equations and infinitely many exact solutions"
+        )
+
+    work = [row[:] for row in design]
+    rhs = list(target)
+    # The scale the pivots are judged against. Taken once from the original
+    # matrix, because the working copy shrinks as columns are eliminated and a
+    # tolerance recomputed from it would drift with the elimination.
+    scale = max(
+        (abs(work[i][j]) for i in range(rows) for j in range(columns)), default=0.0
+    )
+    if scale == 0.0:
+        raise RankDeficient("the design matrix is entirely zero")
+    floor = scale * math.sqrt(rows) * RESIDUAL
+
+    for k in range(columns):
+        norm = math.sqrt(math.fsum(work[i][k] ** 2 for i in range(k, rows)))
+        if norm <= floor:
+            raise RankDeficient(
+                f"column {k} of the design is a linear combination of the columns "
+                f"before it: what remains of it after eliminating them has norm "
+                f"{norm:.3e} against a scale of {scale:.3e}. The regression has no "
+                "unique solution; drop a factor or combine the dependent ones."
+            )
+        # Reflect away from the leading entry rather than towards it. Choosing
+        # the other sign subtracts two nearly equal numbers when the column
+        # already points along the axis, which is the one case the reflection
+        # was not needed for and the one case it destroys.
+        alpha = -norm if work[k][k] >= 0.0 else norm
+        vector = [work[i][k] for i in range(k, rows)]
+        vector[0] -= alpha
+        squared = math.fsum(value * value for value in vector)
+        if squared > 0.0:
+            for j in range(k, columns):
+                dot = math.fsum(
+                    vector[i - k] * work[i][j] for i in range(k, rows)
+                )
+                factor = 2.0 * dot / squared
+                for i in range(k, rows):
+                    work[i][j] -= factor * vector[i - k]
+            dot = math.fsum(vector[i - k] * rhs[i] for i in range(k, rows))
+            factor = 2.0 * dot / squared
+            for i in range(k, rows):
+                rhs[i] -= factor * vector[i - k]
+        work[k][k] = alpha
+        for i in range(k + 1, rows):
+            work[i][k] = 0.0
+
+    upper = [[work[i][j] for j in range(columns)] for i in range(columns)]
+    return solve_upper(upper, rhs[:columns]), upper
+
+
+def upper_inverse_gram(upper: Matrix) -> Matrix:
+    """``(R' R)^-1`` from the triangular factor, which is ``(X'X)^-1``.
+
+    The diagonal of this scaled by the residual variance gives the squared
+    standard errors of the coefficients. Computed by inverting ``R`` — itself a
+    triangular solve per column — rather than by forming and inverting ``X'X``,
+    for the reason given in :func:`least_squares`.
+    """
+    size = len(upper)
+    inverse = [[0.0] * size for _ in range(size)]
+    for column in range(size):
+        unit = [1.0 if i == column else 0.0 for i in range(size)]
+        solved = solve_upper(upper, unit)
+        for i in range(size):
+            inverse[i][column] = solved[i]
+    # (R'R)^-1 = R^-1 R^-T
+    return symmetrise(
+        [
+            [
+                math.fsum(inverse[i][k] * inverse[j][k] for k in range(size))
+                for j in range(size)
+            ]
+            for i in range(size)
+        ]
+    )
+
+
 __all__ = [
     "MAX_SWEEPS",
     "RESIDUAL",
@@ -328,6 +469,7 @@ __all__ = [
     "NotPositiveDefinite",
     "NotSquare",
     "NotSymmetric",
+    "RankDeficient",
     "Vector",
     "check_symmetric",
     "cholesky",
@@ -337,9 +479,12 @@ __all__ = [
     "eigh",
     "identity",
     "is_positive_semidefinite",
+    "least_squares",
     "matrix_vector",
     "nearest_psd",
     "quadratic_form",
     "reconstruct",
+    "solve_upper",
     "symmetrise",
+    "upper_inverse_gram",
 ]
