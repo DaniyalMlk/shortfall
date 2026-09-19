@@ -42,6 +42,32 @@ jobs:
       - name: Lint
         run: ruff check .
 
+  example:
+    name: The worked example reproduces its published figures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+      - name: Basel calibration
+        # Exits non-zero if either published figure fails to reproduce, so a
+        # change to the numerics cannot quietly move a number that has been in
+        # print since 2016.
+        run: python examples/basel_equivalence.py
+      - name: The command line runs over the bundled data
+        run: |
+          shortfall risk examples/returns.csv --weights 0.4,0.25,0.15,0.2 --shrink
+          shortfall contributions examples/returns.csv --weights 0.4,0.25,0.15,0.2
+          shortfall parity examples/returns.csv --shrink
+          shortfall drawdown examples/returns.csv --periods 252
+          shortfall factors examples/returns.csv --factors examples/factors.csv
+          shortfall --json risk examples/returns.csv > /dev/null
+
   package:
     name: Wheel installs and runs
     runs-on: ubuntu-latest
