@@ -497,7 +497,7 @@ the criterion is set by.
 
 ```bash
 pip install -e ".[dev]"
-pytest          # 699 tests
+pytest          # 708 tests
 mypy --strict
 ruff check .
 ```

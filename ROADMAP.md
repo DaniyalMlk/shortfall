@@ -81,3 +81,5 @@ does not. A test that only agrees with the code it tests is not evidence.
 
 - [x] Skewness and excess kurtosis on a return series, which the Cornish-Fisher
       estimator requires and nothing here could produce
+- [x] A tail-observation count that is not inflated by `count * probability` failing
+      to be an exact integer in binary, which overstated the data behind a figure
