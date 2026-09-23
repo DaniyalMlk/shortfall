@@ -22,6 +22,7 @@ which does not look wrong enough to notice.
 from __future__ import annotations
 
 import math
+import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -145,6 +146,115 @@ class ReturnSeries:
 
     def stdev(self, *, ddof: int = 1) -> float:
         return math.sqrt(self.variance(ddof=ddof))
+
+    def _central_moment(self, order: int) -> float:
+        """``(1/n) sum (x - xbar)^order``, the maximum-likelihood moment.
+
+        Divided by ``n`` and not by ``n - 1``: this is the raw ingredient, and the
+        finite-sample corrections in the two methods below are written in terms of
+        the uncorrected ratios, as their published forms are.
+        """
+        count = len(self.values)
+        centre = self.mean
+        return sum((value - centre) ** order for value in self.values) / count
+
+    def _shape_ratio(self, order: int) -> float:
+        """The standardised moment ``m_order / m_2 ** (order / 2)``.
+
+        Refuses a series with no dispersion rather than dividing by something
+        indistinguishable from zero. A constant series has no shape to describe:
+        every standardised moment is ``0 / 0``, and no value for it is more
+        defensible than another. Returning zero would be the tempting choice and
+        the wrong one, because zero skewness and zero excess kurtosis are exactly
+        what a *normal* series reports, so a flat series would come back looking
+        better behaved than the data it came from.
+
+        **Testing ``m_2 <= 0`` is not enough**, which is the whole reason this is a
+        method and not an inline division. Fifty copies of ``0.004`` do not have a
+        mean that is exactly ``0.004`` in binary, so each deviation is around
+        ``1e-18`` rather than zero, ``m_2`` comes out near ``1e-36``, and the ratio
+        is then whatever the rounding noise happened to be — a number with a
+        plausible magnitude and no meaning at all.
+
+        So the comparison is against the rounding error in ``m_2`` itself, which
+        is about ``n * eps * sum(x^2)``. That is a threshold with no tuned
+        constant in it: it asks whether the dispersion computed is larger than the
+        error made computing it, and refuses when it is not.
+        """
+        count = len(self.values)
+        centre = self.mean
+        second = sum((value - centre) ** 2 for value in self.values)
+        noise = count * sys.float_info.epsilon * sum(value * value for value in self.values)
+        if second <= noise:
+            raise ValueError(
+                f"{self.name} has no usable dispersion across {count} observations: the "
+                f"sum of squared deviations is {second!r}, at or below the "
+                f"{noise!r} of rounding error incurred computing it. A series that is "
+                "constant, or constant to within floating-point resolution, has no "
+                "distribution shape to estimate."
+            )
+        return self._central_moment(order) / math.pow(second / count, order / 2.0)
+
+    def skewness(self, *, corrected: bool = True) -> float:
+        """Sample skewness.
+
+        ``corrected=True`` is the bias-corrected estimator, ``G1``, which is the
+        default for the same reason ``variance`` defaults to ``ddof=1``: the
+        uncorrected ratio is biased towards zero in a short sample, and a risk
+        number that understates asymmetry is the wrong way to be wrong. It needs
+        three observations.
+
+        ``corrected=False`` is the population moment ratio ``g1 = m3 / m2**1.5``,
+        which is what a caller comparing against a formula written in central
+        moments will want.
+
+        The correction is ``G1 = g1 * sqrt(n (n - 1)) / (n - 2)``. It matters at
+        the sample sizes risk work actually runs on: on sixty observations it is
+        a few percent, on twelve it is over ten.
+        """
+        count = len(self.values)
+        minimum = 3 if corrected else 2
+        if count < minimum:
+            raise TooShort(
+                f"{self.name} has {count} observations; skewness needs at least {minimum}"
+                + (", or 2 with corrected=False" if corrected else "")
+            )
+        ratio = self._shape_ratio(3)
+        if not corrected:
+            return ratio
+        return ratio * math.sqrt(count * (count - 1)) / (count - 2)
+
+    def excess_kurtosis(self, *, corrected: bool = True) -> float:
+        """Sample excess kurtosis: a normal series reports zero, not three.
+
+        The convention is excess throughout this library — see
+        :func:`shortfall.cornish_fisher_coefficients`, which is written in terms
+        of it — because the two conventions differ by exactly the value a normal
+        takes, so a raw kurtosis passed where excess is wanted reads as heavy
+        tails on a distribution that has none.
+
+        ``corrected=True`` is ``G2``, the bias-corrected estimator, and needs four
+        observations. ``corrected=False`` is ``g2 = m4 / m2**2 - 3``.
+
+        The correction is ``G2 = (n - 1) / ((n - 2)(n - 3)) * ((n + 1) g2 + 6)``.
+        Unlike the skewness correction it is not a simple inflation: on a sample
+        that is genuinely normal the uncorrected ratio is biased *downwards*, with
+        expectation exactly ``-6 / (n + 1)``, so a short window of well-behaved
+        returns looks thin-tailed rather than normal. Note the ``n + 1``: the
+        commonly quoted ``-6 / n`` is close but wrong, and the difference is four
+        standard errors at twenty observations, which is where it matters most.
+        """
+        count = len(self.values)
+        minimum = 4 if corrected else 2
+        if count < minimum:
+            raise TooShort(
+                f"{self.name} has {count} observations; excess kurtosis needs at least "
+                f"{minimum}" + (", or 2 with corrected=False" if corrected else "")
+            )
+        ratio = self._shape_ratio(4) - 3.0
+        if not corrected:
+            return ratio
+        return (count - 1) / ((count - 2) * (count - 3)) * ((count + 1) * ratio + 6.0)
 
     def cumulative(self) -> float:
         """Total return over the whole series, as a simple return."""
