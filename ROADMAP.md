@@ -60,3 +60,19 @@ does not. A test that only agrees with the code it tests is not evidence.
 - [x] Worked example reproducing a published figure end to end
 - [x] README covering the conventions and the design decisions
 - [x] Continuous integration across supported Python versions with types and lint
+
+## Phase 8 — Distribution
+
+- [x] `py.typed` inside the package, so the annotations reach anyone who installs it
+- [x] Distribution metadata an index can present: authors, keywords, classifiers,
+      project URLs, and the licence as an SPDX expression carrying the LICENSE text
+      into the artefact, which the legacy licence table did not
+- [x] `shortfall --version`, asserted against both the installed metadata and the
+      version declared in `pyproject.toml`
+- [x] A release driven by a version tag, publishing with the index's trusted
+      publishing flow, so no upload credential exists in the repository — and
+      refusing to publish when the tag and the declared version disagree
+- [x] The sdist and the wheel each installed into a clean environment and made to
+      produce an estimate, on pull requests as well as on a tag
+- [ ] A first release on the index, which waits on the publisher being registered
+      there for this project
