@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import math
 import random
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -162,8 +163,22 @@ def sample_expected_shortfall(
     full = min(math.floor(weight), count)
     total = math.fsum(ordered[:full])
     used = full
-    if full < count and weight > full:
-        total += (weight - full) * ordered[full]
+    # The partial observation is taken only when it carries weight worth carrying.
+    # A bare `weight > full` compares against an exact integer that `count *
+    # probability` almost never lands on in binary: 400 * 0.01 is
+    # 4.000000000000000444, so the branch fires on a remainder of 4e-16 and the
+    # returned count reads five where the arithmetic is four. The estimate itself
+    # is unaffected — a term weighted 4e-16 is far below any precision the number
+    # has — but the count is reported as how much data is behind the figure, and
+    # overstating that is the one direction this library must not be wrong in.
+    #
+    # The threshold is the rounding error in the product, `count * eps`. That is a
+    # bound rather than a tuned constant: it asks whether the remainder is larger
+    # than the error made computing it, the same argument the dispersion guard in
+    # `ReturnSeries._shape_ratio` uses.
+    remainder = weight - full
+    if full < count and remainder > count * sys.float_info.epsilon:
+        total += remainder * ordered[full]
         used += 1
     return total / weight, max(used, 1)
 
