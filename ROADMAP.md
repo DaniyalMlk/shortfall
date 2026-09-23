@@ -76,3 +76,8 @@ does not. A test that only agrees with the code it tests is not evidence.
       produce an estimate, on pull requests as well as on a tag
 - [ ] A first release on the index, which waits on the publisher being registered
       there for this project
+
+## Phase 9 — Gaps found by using it
+
+- [x] Skewness and excess kurtosis on a return series, which the Cornish-Fisher
+      estimator requires and nothing here could produce
