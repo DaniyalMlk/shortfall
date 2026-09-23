@@ -209,6 +209,16 @@ cubic coefficient is `-S^2/18` and a symmetric check therefore refuses every
 pure-skewness correction there is. It would be the wrong question, not a
 stricter one.
 
+**The moments it needs come from the series.** `ReturnSeries.skewness()` and
+`ReturnSeries.excess_kurtosis()` estimate them, defaulting to the bias-corrected
+forms for the same reason `variance` defaults to `ddof=1` — and the default
+matters more here than for a variance. On normal data the uncorrected excess
+kurtosis has expectation exactly `-6/(n+1)`, so a short window of perfectly
+well-behaved returns reports thin tails, which for a risk number is being wrong in
+the comfortable direction. (`-6/n` is the figure usually quoted and it is not
+right; at twenty observations the two are four standard errors apart over forty
+thousand replications.)
+
 Its expected shortfall is a closed form rather than a quadrature. Written as a
 cubic in `z`, the tail integral against the normal density is exactly the four
 tail moments of the normal, each of which is exact — and a quadrature over a
@@ -487,7 +497,7 @@ the criterion is set by.
 
 ```bash
 pip install -e ".[dev]"
-pytest          # 658 tests
+pytest          # 699 tests
 mypy --strict
 ruff check .
 ```
