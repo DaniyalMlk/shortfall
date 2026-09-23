@@ -15,6 +15,15 @@ risk and expected shortfall, Euler risk contributions and risk parity, factor
 models and risk attribution, drawdown and the path statistics, and a command
 line over all of it.
 
+## Installing
+
+```bash
+pip install shortfall
+```
+
+Python 3.10 or newer. The library imports only the standard library, so there is
+nothing else to resolve and nothing to compile.
+
 ## Using it
 
 ```python
@@ -478,16 +487,35 @@ the criterion is set by.
 
 ```bash
 pip install -e ".[dev]"
-pytest          # 651 tests
+pytest          # 658 tests
 mypy --strict
 ruff check .
 ```
 
 Continuous integration runs the suite on Python 3.10 through 3.13, type-checks,
 lints, runs the worked example and the command line over the bundled data, and
-installs the built wheel into a clean environment to confirm it can produce an
-estimate that satisfies an identity — a wheel that imports but cannot compute is
-not a working library.
+installs the wheel *and* the sdist into separate clean environments to confirm each
+can produce an estimate that satisfies an identity — a distribution that imports
+but cannot compute is not a working library, and the two artefacts are built by
+different code paths, so a file missing from one can be present in the other.
+
+### Releasing
+
+The version lives in `pyproject.toml` and is mirrored by `shortfall.__version__`;
+a test asserts the two agree, and the release refuses to run if the tag disagrees
+with either.
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The tag builds both artefacts, has `twine` read the metadata the way the index
+will, installs each into a clean environment and runs an estimate out of it, and
+then publishes through the index's trusted-publishing flow — so there is no API
+token in this repository, in the workflow, or in the repository's secrets.
+Registering the publisher is a one-time step done on the index, naming this
+repository, `release.yml` and the `pypi` environment.
 
 Numerical work is checked against a closed form or a published result where one
 exists, and against identities that hold whatever the input where one does not: a
