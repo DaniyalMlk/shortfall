@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
+from . import __version__
 from .contributions import (
     diversification_ratio,
     effective_bets,
@@ -564,6 +565,9 @@ def build_parser() -> argparse.ArgumentParser:
             "taken as dates."
         ),
     )
+    # Worth having for its own sake, and it doubles as the cheapest possible
+    # smoke test of an install: it imports the package and prints something.
+    parser.add_argument("--version", action="version", version=f"shortfall {__version__}")
     parser.add_argument(
         "--json", action="store_true", help="emit machine-readable output"
     )
