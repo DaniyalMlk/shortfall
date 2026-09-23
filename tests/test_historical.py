@@ -229,6 +229,65 @@ def test_the_effective_sample_says_how_thin_the_tail_was() -> None:
     assert result.tail_observations == 3
 
 
+@pytest.mark.parametrize(
+    ("count", "confidence", "expected"),
+    [
+        (400, 0.99, 4),  # n * p = 4.000000000000000444 in binary
+        (100, 0.99, 1),  # 1.0000000000000002
+        (1000, 0.99, 10),  # 10.000000000000002
+        (200, 0.995, 1),  # 1.0000000000000002
+        (500, 0.98, 10),  # 10.000000000000002
+        (250, 0.99, 3),  # 2.5 exactly: a genuine partial, and it counts
+        (1260, 0.975, 32),  # 31.5 exactly
+        (37, 0.9, 4),  # 3.7000000000000006: also genuine
+    ],
+)
+def test_the_tail_count_is_not_inflated_by_the_binary_product(
+    count: int, confidence: float, expected: int
+) -> None:
+    """``n * p`` is almost never an exact integer in binary, and the count must not
+    care.
+
+    The estimator averages the worst ``n p`` observations, with the last one
+    weighted by whatever ``n p`` leaves over. ``400 * 0.01`` is
+    ``4.000000000000000444``, so a naive ``remainder > 0`` test takes a partial
+    observation weighted ``4e-16`` and reports five observations behind a figure
+    that four produced.
+
+    The estimate is untouched by a term that small; the *count* is what breaks, and
+    it is reported as how much data stands behind the number. Overstating that is
+    the one direction this library must not be wrong in, which is why the cases
+    above are the ones where ``n p`` is a whole number in decimal, alongside three
+    where it genuinely is not.
+    """
+    result = historical_risk(gaussian(count, seed=21), confidence=confidence)
+    assert result.tail_observations == expected
+    assert result.effective_sample == pytest.approx(count * (1.0 - confidence), rel=1e-12)
+    assert result.tail_observations == math.ceil(result.effective_sample - 1e-9)
+
+
+def test_dropping_the_negligible_partial_does_not_move_the_estimate() -> None:
+    """The fix is to a count, not to a number, and this is the assertion that says so.
+
+    Recomputes the expected shortfall the way the estimator did before the
+    threshold was added — taking the partial observation on any positive remainder
+    — and requires the two to agree to within a relative 1e-12. If they did not,
+    the fix would be changing an estimate under the guise of correcting a
+    diagnostic.
+    """
+    values = gaussian(400, seed=22)
+    result = historical_risk(values, confidence=0.99)
+
+    ordered = sorted(values)
+    weight = len(values) * 0.01
+    full = math.floor(weight)
+    naive = (math.fsum(ordered[:full]) + (weight - full) * ordered[full]) / weight
+
+    assert -result.expected_shortfall == pytest.approx(naive, rel=1e-12)
+    # And it is the count that differs, so the test is not vacuous.
+    assert result.tail_observations == full
+
+
 def test_a_return_series_can_be_passed_directly() -> None:
     series = ReturnSeries("a", tuple(gaussian(500, seed=11)), Convention.SIMPLE)
     assert historical_risk(series).value_at_risk == pytest.approx(
