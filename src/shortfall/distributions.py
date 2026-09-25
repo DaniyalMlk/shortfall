@@ -300,12 +300,173 @@ def _beta_fraction(x: float, a: float, b: float) -> float:
     )
 
 
+def regularised_incomplete_gamma(x: float, a: float) -> float:
+    """``P(a, x)``, the lower regularised incomplete gamma function.
+
+    Two expansions, each used where it converges. The series in ascending
+    powers of ``x`` is fast for ``x`` below about ``a + 1`` and degrades past
+    it; the continued fraction for the upper function ``Q = 1 - P`` is fast
+    above and degrades below. The crossover is the standard one, and taking
+    ``P = 1 - Q`` on the upper branch is safe here because ``Q`` is the larger
+    of the two there.
+
+    The reverse subtraction would not be: a chi-square *survival* probability
+    of 1e-12 computed as ``1 - P`` with ``P`` near one has no correct digits
+    left. :func:`chi_square_sf` therefore goes to the fraction directly rather
+    than to this function, which is the whole reason the private helpers below
+    are split out.
+    """
+    if x < 0.0:
+        raise OutOfDomain(f"the incomplete gamma is defined for x >= 0, got x={x!r}")
+    _check_degrees(a, what="the shape parameter, a,")
+    if x == 0.0:
+        return 0.0
+    if x < a + 1.0:
+        return _gamma_series(x, a)
+    return 1.0 - _gamma_fraction(x, a)
+
+
+def _gamma_series(x: float, a: float) -> float:
+    """``P(a, x)`` by its ascending series. Used only for ``x < a + 1``."""
+    term = 1.0 / a
+    total = term
+    index = a
+    for _ in range(_FRACTION_STEPS):
+        index += 1.0
+        term *= x / index
+        total += term
+        if abs(term) < abs(total) * _FRACTION_TOLERANCE:
+            break
+    else:  # pragma: no cover - unreachable below the crossover
+        raise ArithmeticError(
+            f"the incomplete gamma series did not converge in {_FRACTION_STEPS} "
+            f"steps at x={x!r}, a={a!r}"
+        )
+    return total * math.exp(-x + a * math.log(x) - math.lgamma(a))
+
+
+def _gamma_fraction(x: float, a: float) -> float:
+    """``Q(a, x)`` by the continued fraction, in modified Lentz form.
+
+    Used only for ``x >= a + 1``, and computed directly rather than as
+    ``1 - P`` so that a small upper tail keeps its significant digits.
+    """
+    b = x + 1.0 - a
+    c = 1.0 / _TINY
+    d = 1.0 / b
+    result = d
+    for index in range(1, _FRACTION_STEPS + 1):
+        step = -index * (index - a)
+        b += 2.0
+        d = step * d + b
+        if abs(d) < _TINY:
+            d = _TINY
+        c = b + step / c
+        if abs(c) < _TINY:
+            c = _TINY
+        d = 1.0 / d
+        factor = d * c
+        result *= factor
+        if abs(factor - 1.0) < _FRACTION_TOLERANCE:
+            break
+    else:  # pragma: no cover - unreachable above the crossover
+        raise ArithmeticError(
+            f"the incomplete gamma continued fraction did not converge in "
+            f"{_FRACTION_STEPS} steps at x={x!r}, a={a!r}"
+        )
+    return result * math.exp(-x + a * math.log(x) - math.lgamma(a))
+
+
+def chi_square_cdf(x: float, degrees: float) -> float:
+    """The chi-square distribution function, ``P(k/2, x/2)``."""
+    _check_degrees(degrees)
+    if x <= 0.0:
+        return 0.0
+    return regularised_incomplete_gamma(0.5 * x, 0.5 * degrees)
+
+
+def chi_square_sf(x: float, degrees: float) -> float:
+    """The chi-square survival function, ``1 - F(x)``.
+
+    This is what a likelihood-ratio test needs, and it is not ``1 - cdf``. A
+    statistic of 60 on one degree of freedom has a survival probability near
+    1e-14; computed as one minus a distribution function that has rounded to
+    exactly 1.0 it comes back as zero, and a p-value of zero is a different
+    claim from a p-value of 1e-14. Above the crossover the upper branch is
+    evaluated directly, so the small number is never formed as a difference.
+    """
+    _check_degrees(degrees)
+    if x <= 0.0:
+        return 1.0
+    half_x, half_k = 0.5 * x, 0.5 * degrees
+    if half_x < half_k + 1.0:
+        return 1.0 - _gamma_series(half_x, half_k)
+    return _gamma_fraction(half_x, half_k)
+
+
+def _check_binomial(trials: int, probability: float) -> None:
+    if trials < 0:
+        raise OutOfDomain(f"a trial count is not negative, got {trials!r}")
+    if not 0.0 <= probability <= 1.0:
+        raise OutOfDomain(f"a probability lies in [0, 1], got {probability!r}")
+
+
+def binomial_sf(successes: int, trials: int, probability: float) -> float:
+    """``P(X >= successes)`` for ``X`` binomial.
+
+    Through the incomplete beta identity ``P(X >= k) = I_p(k, n - k + 1)``
+    rather than by summing the tail. Summing is the obvious implementation and
+    it is both slower and less accurate: each term needs ``lgamma(n + 1)``,
+    which is about 5900 at ``n = 1000``, so a relative error of one ulp in the
+    logarithm becomes a relative error of 6e-13 in the term after ``exp``. The
+    identity evaluates in constant time and inherits the accuracy of
+    :func:`regularised_incomplete_beta` instead.
+
+    The identity is also what keeps a far tail from being formed as a
+    difference: ``P(X >= 20)`` on 250 trials at 1% is 1.9e-12, and the
+    incomplete beta returns it directly.
+    """
+    _check_binomial(trials, probability)
+    if successes <= 0:
+        return 1.0
+    if successes > trials:
+        return 0.0
+    if probability == 0.0:
+        return 0.0
+    if probability == 1.0:
+        return 1.0
+    return regularised_incomplete_beta(probability, successes, trials - successes + 1)
+
+
+def binomial_cdf(successes: int, trials: int, probability: float) -> float:
+    """``P(X <= successes)`` for ``X`` binomial.
+
+    The mirror identity ``P(X <= k) = I_{1-p}(n - k, k + 1)``, evaluated
+    directly for the same reason :func:`binomial_sf` is.
+    """
+    _check_binomial(trials, probability)
+    if successes < 0:
+        return 0.0
+    if successes >= trials:
+        return 1.0
+    if probability == 0.0:
+        return 1.0
+    if probability == 1.0:
+        return 0.0
+    return regularised_incomplete_beta(1.0 - probability, trials - successes, successes + 1)
+
+
 __all__ = [
     "OutOfDomain",
+    "binomial_cdf",
+    "binomial_sf",
+    "chi_square_cdf",
+    "chi_square_sf",
     "normal_cdf",
     "normal_pdf",
     "normal_ppf",
     "regularised_incomplete_beta",
+    "regularised_incomplete_gamma",
     "student_t_cdf",
     "student_t_pdf",
     "student_t_ppf",

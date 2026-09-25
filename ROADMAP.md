@@ -83,3 +83,45 @@ does not. A test that only agrees with the code it tests is not evidence.
       estimator requires and nothing here could produce
 - [x] A tail-observation count that is not inflated by `count * probability` failing
       to be an exact integer in binary, which overstated the data behind a figure
+
+## Phase 10 — Scoring a model against what happened
+
+Every estimator here produces a forecast, and until this phase nothing could
+ask whether a forecast had been any good.
+
+- [x] Chi-square and binomial tail probabilities, to the accuracy standard the
+      rest of `distributions` is held to, with the survival functions evaluated
+      on their own branch rather than as one minus a distribution function
+- [x] Exception indicators over a one-step-ahead forecast series, with the
+      loss-sign convention refused rather than guessed at
+- [x] Kupiec's unconditional coverage test on the breach count
+- [x] Christoffersen's independence test on whether breaches cluster, which a
+      count cannot see and which is how a constant-volatility model fails while
+      getting the count right
+- [x] The conditional coverage test that combines the two
+- [x] Supervisory traffic-light zones derived from the binomial, reproducing the
+      published 250-day table exactly and also answering for a sample that is
+      not 250 days long; the tabulated capital add-on returned only for the
+      setup it is published for
+- [x] The Acerbi-Szekely statistics for expected shortfall, which is not
+      elicitable and so has no breach-count equivalent, with a simulated null
+- [x] Size and power of each test established by simulation against a model
+      that is correct and a model whose defect was put there on purpose
+- [x] A `validate` command over a file of returns and forecasts
+
+Three things the tests record because they are easy to assume and wrong.
+
+Kupiec rejects a clustered process about one time in six even when its
+unconditional rate is exactly right, because clustering makes the breach count
+overdispersed relative to the binomial its null assumes. The claim worth making
+is the gap — independence catches it five times as often — not that the count
+is uninformative.
+
+The Acerbi-Szekely test 1 lands at -0.245 when the true volatility is double
+the forecast. It is a ratio of tail means, and a normal's conditional tail mean
+grows slowly once the threshold is already inside the distribution, so the
+statistic is far smaller than the error it is detecting.
+
+An overstated tail can barely be tested at all. A forecast twice too wide
+produces zero breaches in four thousand observations, and a statistic read off
+zero breaches is not evidence about a tail mean.

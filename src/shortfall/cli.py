@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from . import __version__
+from .backtest import validate
 from .contributions import (
     diversification_ratio,
     effective_bets,
@@ -547,12 +548,135 @@ def command_factors(arguments: argparse.Namespace, stream: TextIO) -> dict[str, 
     return payload
 
 
+def command_validate(arguments: argparse.Namespace, stream: TextIO) -> dict[str, Any]:
+    """Score a forecast series against what actually happened.
+
+    The file is a different shape from every other command's: one row per
+    period carrying the realised return and the forecast that was made *for*
+    that period, rather than a panel of asset returns. A forecast series is
+    one-step-ahead, so no offsetting happens here — whoever built the file
+    lined it up, and getting that wrong is the single easiest way to make a
+    broken model look fine.
+    """
+    parsed = read_table(arguments.forecasts)
+    panel = parsed.panel
+    columns = list(panel.names)
+    required = [arguments.returns_column, arguments.var_column]
+    missing = [name for name in required if name not in columns]
+    if missing:
+        raise InputError(
+            f"{arguments.forecasts} has no column named {missing[0]!r}. It has "
+            f"{', '.join(repr(name) for name in columns)}. Name the columns with "
+            "--returns-column and --var-column if they are called something else."
+        )
+    observed = list(panel[arguments.returns_column].values)
+    value_at_risk = list(panel[arguments.var_column].values)
+    shortfalls: list[float] | None = None
+    if arguments.es_column is not None:
+        if arguments.es_column not in columns:
+            raise InputError(
+                f"{arguments.forecasts} has no column named {arguments.es_column!r}"
+            )
+        shortfalls = list(panel[arguments.es_column].values)
+
+    result = validate(
+        observed,
+        value_at_risk,
+        confidence=arguments.confidence,
+        expected_shortfall=shortfalls,
+        distribution=Distribution(arguments.distribution),
+        degrees=arguments.degrees,
+        replications=arguments.replications,
+        seed=arguments.seed,
+    )
+    breaches = result.exceedances
+    payload: dict[str, Any] = {
+        "observations": breaches.observations,
+        "breaches": breaches.count,
+        "expected_breaches": breaches.expected,
+        "breach_rate": breaches.rate,
+        "confidence": arguments.confidence,
+        "tests": {
+            test.name: {
+                "statistic": test.statistic,
+                "degrees_of_freedom": test.degrees_of_freedom,
+                "p_value": test.p_value,
+                "advisory": test.advisory,
+            }
+            for test in (result.unconditional, result.independence, result.conditional)
+        },
+        "traffic_light": {
+            "zone": result.traffic_light.zone.value,
+            "cumulative_probability": result.traffic_light.cumulative_probability,
+            "plus_factor": result.traffic_light.plus_factor,
+        },
+        "rejected_at_5_percent": list(result.rejected_at(0.05)),
+        "warnings": list(result.warnings),
+    }
+    if result.expected_shortfall is not None:
+        payload["expected_shortfall"] = {
+            "conditional": result.expected_shortfall.conditional,
+            "unconditional": result.expected_shortfall.unconditional,
+            "conditional_p_value": result.expected_shortfall.conditional_p_value,
+            "unconditional_p_value": result.expected_shortfall.unconditional_p_value,
+            "replications": result.expected_shortfall.replications,
+            "direction": result.expected_shortfall.direction,
+        }
+    if arguments.json:
+        return payload
+
+    print("Risk model validation\n", file=stream)
+    rows = [
+        ["quantity", "value"],
+        ["observations", str(breaches.observations)],
+        ["breaches", str(breaches.count)],
+        ["expected breaches", f"{breaches.expected:.2f}"],
+        ["breach rate", percent(breaches.rate)],
+        ["traffic light", result.traffic_light.zone.value],
+    ]
+    if result.traffic_light.plus_factor is not None:
+        rows.append(["capital add-on", f"{result.traffic_light.plus_factor:.2f}"])
+    table(rows, stream)
+
+    print("", file=stream)
+    test_rows = [["test", "statistic", "p-value", "verdict"]]
+    for test in (result.unconditional, result.independence, result.conditional):
+        verdict = "rejected" if test.rejects_at(0.05) else "not rejected"
+        if test.advisory:
+            verdict += " (advisory)"
+        test_rows.append([test.name, f"{test.statistic:.4f}", f"{test.p_value:.4f}", verdict])
+    table(test_rows, stream)
+
+    for test in (result.unconditional, result.independence):
+        print(f"\n{test.name}: {test.interpretation}", file=stream)
+
+    if result.expected_shortfall is not None:
+        found = result.expected_shortfall
+        print(
+            f"\nExpected shortfall: test 1 {found.conditional:+.4f}, "
+            f"test 2 {found.unconditional:+.4f}"
+            + (
+                f" (p = {found.unconditional_p_value:.4f} from "
+                f"{found.replications} replications)"
+                if found.unconditional_p_value is not None
+                else " — pass --replications for a p-value"
+            ),
+            file=stream,
+        )
+        print(f"  {found.direction}", file=stream)
+
+    for warning in result.warnings:
+        print(f"\nNote: {warning}", file=stream)
+    return payload
+
+
 COMMANDS = {
     "risk": command_risk,
     "contributions": command_contributions,
     "parity": command_parity,
     "drawdown": command_drawdown,
     "factors": command_factors,
+    "validate": command_validate,
 }
 
 
@@ -621,6 +745,47 @@ def build_parser() -> argparse.ArgumentParser:
     factors.add_argument(
         "--factors", type=Path, required=True, help="CSV of factor returns"
     )
+
+    checked = subparsers.add_parser(
+        "validate",
+        help="score a value-at-risk forecast series against realised returns",
+        description=(
+            "Takes a CSV with one row per period holding the realised return and "
+            "the forecast made for that period. The rows are used as they stand: "
+            "a forecast series is one-step-ahead, and lining it up is the caller's "
+            "job because only the caller knows how the file was built."
+        ),
+    )
+    checked.add_argument("forecasts", type=Path, help="CSV of returns and forecasts")
+    checked.add_argument(
+        "--returns-column", default="return", help="column holding the realised return"
+    )
+    checked.add_argument(
+        "--var-column",
+        default="var",
+        help="column holding the value-at-risk forecast, as a positive loss",
+    )
+    checked.add_argument(
+        "--es-column",
+        default=None,
+        help="column holding the expected-shortfall forecast; omit to skip those tests",
+    )
+    checked.add_argument("--confidence", type=float, default=0.99)
+    checked.add_argument(
+        "--replications",
+        type=int,
+        default=0,
+        help="simulate the expected-shortfall null this many times for a p-value",
+    )
+    checked.add_argument(
+        "--distribution",
+        default="normal",
+        choices=["normal", "student-t"],
+        help="the predictive distribution the forecasts were built under, "
+        "which is what the simulated null draws from",
+    )
+    checked.add_argument("--degrees", type=float, default=5.0)
+    checked.add_argument("--seed", type=int, default=0)
     return parser
 
 
