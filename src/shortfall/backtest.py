@@ -63,6 +63,11 @@ SUPERVISORY_CONFIDENCE: Final = 0.99
 #: other observation count.
 _PLUS_FACTOR: Final = {5: 0.40, 6: 0.50, 7: 0.65, 8: 0.75, 9: 0.85}
 
+#: Below this the conditional statistic is reported without a verdict. Two
+#: breaches on a year of data give a tail mean known to nothing like 3%, so a
+#: smaller reading is not evidence of a direction.
+_NEUTRAL_BAND: Final = 0.03
+
 #: Zone boundaries, as cumulative binomial probability of the observed count
 #: or fewer. Green below the first, red at or above the second.
 _GREEN_CEILING: Final = 0.95
@@ -180,13 +185,37 @@ class ExpectedShortfallTest:
     replications: int = 0
 
     @property
+    def realised_ratio(self) -> float | None:
+        """Realised tail mean over forecast tail mean, or ``None`` with no breaches.
+
+        This is ``1 - conditional`` and is the statistic in the units a reader
+        can act on: 1.24 means realised tail losses averaged 24% more than the
+        model said they would.
+        """
+        if self.breaches == 0:
+            return None
+        return 1.0 - self.conditional
+
+    @property
     def direction(self) -> str:
-        """Which way the tail is wrong, in words."""
+        """Which way the tail is wrong, in words and with the magnitude.
+
+        The sign alone is close to useless, because a statistic is almost
+        never exactly zero: a value of -0.0001 is a correct model and reading
+        it as "understated" is the kind of report that gets ignored. The ratio
+        is quoted so the size speaks for itself, and the verdict is withheld
+        inside a band of a few percent, which is well inside the sampling
+        error of a year of daily data at 99%.
+        """
         if self.breaches == 0:
             return "no breaches, so the tail mean was never tested"
+        ratio = 1.0 - self.conditional
+        detail = f"realised tail losses averaged {ratio:.1%} of the forecast tail mean"
+        if abs(self.conditional) < _NEUTRAL_BAND:
+            return f"{detail}, which is as close as this many breaches can show"
         if self.conditional < 0.0:
-            return "realised tail losses exceeded the forecast: the tail is understated"
-        return "realised tail losses fell short of the forecast: the tail is overstated"
+            return f"{detail}: the tail is understated"
+        return f"{detail}: the tail is overstated"
 
 
 @dataclass(frozen=True)
