@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import random
 from pathlib import Path
 
@@ -492,3 +493,103 @@ def test_validate_accepts_forecasts_that_change_every_day(tmp_path: Path) -> Non
     assert main(["--json", "validate", str(path), "--es-column", "es"], stream=stream) == 0
     payload = json.loads(stream.getvalue())
     assert payload["rejected_at_5_percent"] == []
+
+
+# --------------------------------------------------------------------------
+# volatility: fitting the conditional model.
+# --------------------------------------------------------------------------
+
+
+def garch_file(path: Path, *, periods: int = 900, seed: int = 4) -> Path:
+    """A simulated GARCH path, so the fit has something real to recover."""
+    rng = random.Random(seed)
+    variance = 2e-6
+    lines = ["date,fund"]
+    for index in range(periods):
+        value = math.sqrt(variance) * rng.gauss(0.0, 1.0)
+        variance = 2e-6 + 0.09 * value * value + 0.89 * variance
+        lines.append(f"d{index},{value:.8f}")
+    return write(path, "\n".join(lines) + "\n")
+
+
+def test_volatility_recovers_the_simulated_parameters(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    assert main(["--json", "volatility", str(garch_file(tmp_path / "v.csv"))], stream=stream) == 0
+    payload = json.loads(stream.getvalue())
+    assert payload["converged"] is True
+    assert payload["alpha"] == pytest.approx(0.09, abs=0.05)
+    assert payload["beta"] == pytest.approx(0.89, abs=0.05)
+    assert 0.9 < payload["persistence"] < 1.0
+    assert payload["halfLife"] > 0.0
+
+
+def test_volatility_prints_the_square_root_of_time_comparison(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    assert main(
+        ["volatility", str(garch_file(tmp_path / "v.csv")), "--horizon", "250"],
+        stream=stream,
+    ) == 0
+    output = stream.getvalue()
+    assert "Conditional volatility" in output
+    assert "against square-root-of-time" in output
+    assert "square root of 250" in output
+    assert "overstates" in output or "understates" in output
+
+
+def test_the_horizon_figure_differs_from_square_root_of_time(tmp_path: Path) -> None:
+    """And by more at a longer horizon, because there is more time to revert."""
+    path = garch_file(tmp_path / "v.csv")
+    ratios = []
+    for horizon in ("10", "250"):
+        stream = io.StringIO()
+        assert main(["--json", "volatility", str(path), "--horizon", horizon], stream=stream) == 0
+        ratios.append(json.loads(stream.getvalue())["squareRootOfTimeRatio"])
+    near, far = ratios
+    assert abs(far - 1.0) > abs(near - 1.0)
+
+
+def test_variance_targeting_is_available_from_the_command_line(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    assert main(
+        ["--json", "volatility", str(garch_file(tmp_path / "v.csv")), "--variance-targeting"],
+        stream=stream,
+    ) == 0
+    payload = json.loads(stream.getvalue())
+    assert payload["varianceTargeted"] is True
+    assert payload["converged"] is True
+
+
+def test_volatility_fits_a_named_column_of_a_multi_asset_file(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    assert main(
+        ["--json", "volatility", str(sample_file(tmp_path / "r.csv")), "--column", "beta"],
+        stream=stream,
+    ) == 0
+    assert json.loads(stream.getvalue())["series"] == "beta"
+
+
+def test_volatility_falls_back_to_the_portfolio_on_a_multi_asset_file(
+    tmp_path: Path,
+) -> None:
+    stream = io.StringIO()
+    assert main(
+        ["--json", "volatility", str(sample_file(tmp_path / "r.csv"))], stream=stream
+    ) == 0
+    assert json.loads(stream.getvalue())["series"] == "portfolio"
+
+
+def test_volatility_names_the_columns_when_asked_for_one_that_is_missing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(
+        ["volatility", str(sample_file(tmp_path / "r.csv")), "--column", "delta"],
+        stream=io.StringIO(),
+    ) == 2
+    message = capsys.readouterr().err
+    assert "'delta'" in message
+    assert "'alpha'" in message
+
+
+def test_volatility_refuses_a_sample_too_short_to_fit(tmp_path: Path) -> None:
+    path = garch_file(tmp_path / "v.csv", periods=40)
+    assert main(["volatility", str(path)], stream=io.StringIO()) == 2
