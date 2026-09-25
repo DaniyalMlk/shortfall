@@ -462,7 +462,25 @@ def test_the_shortfall_statistics_go_positive_when_the_tail_is_overstated() -> N
     assert result.unconditional > 0.5
     assert result.unconditional == pytest.approx(second, abs=0.35)
     assert first > 0.0
-    assert "overstated" in result.direction
+    # Test 2 has caught it and test 1 has not, which is the point. Four
+    # breaches put the conditional reading inside the neutral band, so the
+    # verdict is correctly withheld rather than asserted from a sign.
+    assert result.realised_ratio is not None
+    assert result.realised_ratio < 1.0
+    assert "as close as this many breaches can show" in result.direction
+
+
+def test_the_conditional_verdict_is_withheld_when_the_reading_is_inside_the_band() -> None:
+    """A statistic is almost never exactly zero, so a bare sign would declare
+    a direction on every correct model there has ever been."""
+    var, es = normal_forecast(0.01)
+    observed = normal_returns(0.01, 4000, seed=25)
+    result = expected_shortfall_test(observed, [var] * 4000, [es] * 4000, confidence=CONFIDENCE)
+    assert result.conditional != 0.0
+    assert abs(result.conditional) < 0.03
+    assert "understated" not in result.direction
+    assert "overstated" not in result.direction
+    assert result.realised_ratio == pytest.approx(1.0 - result.conditional)
 
 
 def test_a_forecast_twice_too_wide_produces_no_breaches_to_test_with() -> None:

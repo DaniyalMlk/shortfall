@@ -351,3 +351,144 @@ def test_a_good_run_exits_zero(tmp_path: Path) -> None:
 def test_no_command_is_an_argument_error(tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
         main([])
+
+
+# --------------------------------------------------------------------------
+# validate: scoring a forecast series against what happened.
+# --------------------------------------------------------------------------
+
+
+def forecast_file(
+    path: Path,
+    *,
+    periods: int = 250,
+    true_volatility: float = 0.012,
+    forecast_volatility: float = 0.012,
+    seed: int = 5,
+) -> Path:
+    """Returns beside the forecasts that were made for them.
+
+    Separating the true and forecast volatilities is what lets a test point
+    the command at a model that is wrong on purpose.
+    """
+    from shortfall.distributions import normal_pdf, normal_ppf
+
+    rng = random.Random(seed)
+    quantile = -normal_ppf(0.01)
+    value_at_risk = forecast_volatility * quantile
+    shortfall = forecast_volatility * normal_pdf(quantile) / 0.01
+    lines = ["date,return,var,es"]
+    for index in range(periods):
+        lines.append(
+            f"2024-{(index % 12) + 1:02d}-{(index % 28) + 1:02d},"
+            f"{rng.gauss(0.0, true_volatility):.8f},{value_at_risk:.8f},{shortfall:.8f}"
+        )
+    return write(path, "\n".join(lines) + "\n")
+
+
+def test_validate_reports_a_healthy_model(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    code = main(["validate", str(forecast_file(tmp_path / "f.csv"))], stream=stream)
+    assert code == 0
+    output = stream.getvalue()
+    assert "Risk model validation" in output
+    assert "green" in output
+    assert "not rejected" in output
+
+
+def test_validate_emits_json_a_caller_can_branch_on(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    code = main(
+        ["--json", "validate", str(forecast_file(tmp_path / "f.csv")), "--es-column", "es"],
+        stream=stream,
+    )
+    assert code == 0
+    payload = json.loads(stream.getvalue().split("\n\n")[-1])
+    assert payload["observations"] == 250
+    assert payload["tests"]["unconditional coverage"]["degrees_of_freedom"] == 1
+    assert payload["tests"]["conditional coverage"]["degrees_of_freedom"] == 2
+    assert payload["traffic_light"]["zone"] == "green"
+    assert payload["traffic_light"]["plus_factor"] == 0.0
+    assert payload["rejected_at_5_percent"] == []
+    assert "expected_shortfall" in payload
+
+
+def test_validate_condemns_a_model_whose_volatility_is_far_too_low(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    path = forecast_file(tmp_path / "f.csv", true_volatility=0.03, forecast_volatility=0.01)
+    code = main(["--json", "validate", str(path)], stream=stream)
+    assert code == 0
+    payload = json.loads(stream.getvalue())
+    assert payload["breaches"] > 20
+    assert payload["traffic_light"]["zone"] == "red"
+    assert payload["traffic_light"]["plus_factor"] == 1.0
+    assert "unconditional coverage" in payload["rejected_at_5_percent"]
+
+
+def test_validate_attaches_a_p_value_when_asked_to_simulate(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    path = forecast_file(tmp_path / "f.csv", true_volatility=0.02, forecast_volatility=0.01)
+    code = main(
+        [
+            "--json",
+            "validate",
+            str(path),
+            "--es-column",
+            "es",
+            "--replications",
+            "200",
+            "--seed",
+            "3",
+        ],
+        stream=stream,
+    )
+    assert code == 0
+    found = json.loads(stream.getvalue())["expected_shortfall"]
+    assert found["replications"] == 200
+    assert found["unconditional_p_value"] is not None
+    assert found["unconditional_p_value"] < 0.05
+    assert "understated" in found["direction"]
+
+
+def test_validate_says_which_column_it_could_not_find(tmp_path: Path) -> None:
+    path = write(tmp_path / "f.csv", "date,ret,forecast\n2024-01-01,-0.01,0.02\n")
+    stream = io.StringIO()
+    code = main(["validate", str(path)], stream=stream)
+    assert code == 2
+
+
+def test_validate_names_the_columns_the_file_actually_has(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = write(tmp_path / "f.csv", "date,ret,forecast\n2024-01-01,-0.01,0.02\n")
+    main(["validate", str(path)], stream=io.StringIO())
+    message = capsys.readouterr().err
+    assert "'return'" in message
+    assert "'ret'" in message and "'forecast'" in message
+
+
+def test_validate_refuses_a_forecast_column_of_negative_losses(tmp_path: Path) -> None:
+    """The commonest way to hold this wrong, and it must not score quietly."""
+    path = write(
+        tmp_path / "f.csv",
+        "date,return,var\n2024-01-01,-0.01,-0.02\n2024-01-02,0.01,-0.02\n",
+    )
+    stream = io.StringIO()
+    assert main(["validate", str(path)], stream=stream) == 2
+
+
+def test_validate_accepts_forecasts_that_change_every_day(tmp_path: Path) -> None:
+    rng = random.Random(9)
+    lines = ["date,return,var,es"]
+    for index in range(300):
+        volatility = 0.005 + 0.02 * rng.random()
+        lines.append(
+            f"2024-{(index % 12) + 1:02d}-{(index % 28) + 1:02d},"
+            f"{rng.gauss(0.0, volatility):.8f},{2.3263 * volatility:.8f},"
+            f"{2.6652 * volatility:.8f}"
+        )
+    path = write(tmp_path / "f.csv", "\n".join(lines) + "\n")
+    stream = io.StringIO()
+    assert main(["--json", "validate", str(path), "--es-column", "es"], stream=stream) == 0
+    payload = json.loads(stream.getvalue())
+    assert payload["rejected_at_5_percent"] == []
