@@ -125,3 +125,50 @@ statistic is far smaller than the error it is detecting.
 An overstated tail can barely be tested at all. A forecast twice too wide
 produces zero breaches in four thousand observations, and a statistic read off
 zero breaches is not evidence about a tail mean.
+
+## Phase 11 — A volatility process
+
+Phase 10 left the library able to detect a model whose breaches cluster and
+unable to offer anything to fix it. `ewma_volatility` at a fixed decay is a
+filter rather than a model: the decay is assumed, a shock decays towards
+nothing, and the forecast is flat at every horizon.
+
+- [x] GARCH(1,1) fitted by maximum likelihood
+- [x] Constraints carried by a parameter transform rather than a penalty, so no
+      step can reach the inadmissible region
+- [x] Nelder-Mead stopping on the size of the simplex as well as the spread of
+      its values, because this surface has a flat ridge the second test alone
+      stops early on
+- [x] Variance targeting as an option, for the short samples where omega is the
+      product of a level and a nearly unidentified factor
+- [x] Persistence, long-run variance and the half-life of a shock
+- [x] Multi-step forecasts through the mean-reverting recursion, and the
+      aggregate horizon variance square-root-of-time approximates
+- [x] Standardised residuals, so the fit can be doubted
+- [x] A `volatility` command
+- [x] Parameters recovered from simulated data with known ones, and the
+      optimiser checked against a function whose minimum is known in closed form
+
+The measured results, none of which were assumed beforehand.
+
+Recovery: (2e-6, 0.08, 0.90) comes back as (2.008e-6, 0.0787, 0.8998) from 4000
+observations. From 1000 the persistence is materially low, because the
+likelihood is flat along that direction and four years of daily data has not
+seen enough slow decay to pin it down.
+
+Square-root-of-time: from four times the long-run variance at a persistence of
+0.975, the one-year horizon is 39% below the scaled figure and ten days is 4%
+below. In a calm market it runs the other way, which is the direction that
+costs money.
+
+The loop closes, but only mostly. Over twenty regime-switching samples the
+constant forecast is rejected on independence 17 times and the GARCH forecast
+once; the breach count goes from about 51 to about 28 against a nominal 20.
+Halved rather than fixed — a Gaussian GARCH still understates the tail of a
+series whose standardised residuals are fat.
+
+And a finding about phase 10 rather than this one: over thirty samples, a
+constant forecast is caught 29 times on a regime-switching series and 13 times
+on a GARCH at realistic parameters. The independence test is much weaker
+against smooth volatility than against regime switches, so passing it is not
+evidence that volatility is constant.

@@ -140,6 +140,12 @@ from .series import (
     ReturnSeries,
     TooShort,
 )
+from .volatility import (
+    Garch,
+    fit_garch,
+    garch_forecast_series,
+    garch_variances,
+)
 
 __version__ = "0.1.0"
 
@@ -165,6 +171,7 @@ __all__ = [
     "ExpectedShortfallTest",
     "FactorModel",
     "Filtered",
+    "Garch",
     "HistoricalRisk",
     "Interval",
     "Misaligned",
@@ -220,6 +227,9 @@ __all__ = [
     "expected_shortfall_test",
     "filtered_historical_risk",
     "fit_factor_model",
+    "fit_garch",
+    "garch_forecast_series",
+    "garch_variances",
     "historical_risk",
     "historical_shortfall_contributions",
     "independence",

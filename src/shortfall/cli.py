@@ -40,6 +40,7 @@ from .factors import attribute_risk, fit_factor_model
 from .historical import historical_risk
 from .parametric import Distribution, portfolio_risk
 from .series import Panel
+from .volatility import fit_garch
 
 
 class InputError(ValueError):
@@ -670,6 +671,100 @@ def command_validate(arguments: argparse.Namespace, stream: TextIO) -> dict[str,
     return payload
 
 
+def command_volatility(arguments: argparse.Namespace, stream: TextIO) -> dict[str, Any]:
+    """Fit a conditional volatility model and report what it implies.
+
+    Takes the same returns file every other command does, and a column to fit.
+    The forecast series it prints is the one `validate` scores, which is the
+    pairing the model exists for.
+    """
+    parsed = read_table(arguments.returns)
+    panel = parsed.panel
+    names = list(panel.names)
+    if arguments.column is not None:
+        if arguments.column not in names:
+            raise InputError(
+                f"{arguments.returns} has no column named {arguments.column!r}. It has "
+                f"{', '.join(repr(name) for name in names)}."
+            )
+        values = list(panel[arguments.column].values)
+        label = arguments.column
+    elif len(names) == 1:
+        values = list(panel.column(0).values)
+        label = names[0]
+    else:
+        weights = parse_weights(arguments.weights, panel)
+        values = list(panel.portfolio(weights).values)
+        label = "portfolio"
+
+    fitted = fit_garch(
+        values, variance_targeting=arguments.variance_targeting, strict=False
+    )
+    horizon = int(arguments.horizon)
+    payload: dict[str, Any] = {
+        "series": label,
+        "observations": fitted.observations,
+        "omega": fitted.omega,
+        "alpha": fitted.alpha,
+        "beta": fitted.beta,
+        "persistence": fitted.persistence,
+        "halfLife": fitted.half_life,
+        "longRunVolatility": fitted.long_run_volatility,
+        "currentVolatility": fitted.volatilities[-1],
+        "nextVolatility": math.sqrt(fitted.next_variance(values[-1])),
+        "logLikelihood": fitted.log_likelihood,
+        "iterations": fitted.iterations,
+        "converged": fitted.converged,
+        "varianceTargeted": fitted.variance_targeted,
+        "horizon": horizon,
+        "horizonVolatility": math.sqrt(
+            fitted.horizon_variance(horizon, last_return=values[-1])
+        ),
+        "squareRootOfTimeRatio": fitted.scaling_against_square_root_of_time(
+            horizon, last_return=values[-1]
+        ),
+    }
+    if arguments.json:
+        return payload
+
+    print(f"Conditional volatility — {label}\n", file=stream)
+    ratio = payload["squareRootOfTimeRatio"]
+    rows = [
+        ["parameter", "value"],
+        ["observations", str(fitted.observations)],
+        ["omega", f"{fitted.omega:.6g}"],
+        ["alpha", f"{fitted.alpha:.4f}"],
+        ["beta", f"{fitted.beta:.4f}"],
+        ["persistence", f"{fitted.persistence:.4f}"],
+        ["half-life (periods)", f"{fitted.half_life:.1f}"],
+        ["long-run volatility", percent(fitted.long_run_volatility)],
+        ["current volatility", percent(fitted.volatilities[-1])],
+        ["one step ahead", percent(payload["nextVolatility"])],
+        [f"{horizon} periods ahead", percent(payload["horizonVolatility"])],
+        ["against square-root-of-time", f"{ratio:.4f}"],
+        ["log likelihood", f"{fitted.log_likelihood:.2f}"],
+        ["converged", "yes" if fitted.converged else "NO"],
+    ]
+    table(rows, stream)
+    direction = "overstates" if ratio < 1.0 else "understates"
+    print(
+        f"\nScaling today's volatility by the square root of {horizon} "
+        f"{direction} the horizon figure by {abs(1.0 - ratio):.1%}, because the "
+        "process mean-reverts towards its long-run level and an exponentially "
+        "weighted estimate has no long-run level to revert to.",
+        file=stream,
+    )
+    if not fitted.converged:
+        print(
+            "\nThe optimiser did not converge. The parameters above are the best "
+            "point it reached and should not be read as a fit; try "
+            "--variance-targeting, which removes the worst-determined parameter "
+            "from the search.",
+            file=stream,
+        )
+    return payload
+
+
 COMMANDS = {
     "risk": command_risk,
     "contributions": command_contributions,
@@ -677,6 +772,7 @@ COMMANDS = {
     "drawdown": command_drawdown,
     "factors": command_factors,
     "validate": command_validate,
+    "volatility": command_volatility,
 }
 
 
@@ -744,6 +840,29 @@ def build_parser() -> argparse.ArgumentParser:
     common(factors)
     factors.add_argument(
         "--factors", type=Path, required=True, help="CSV of factor returns"
+    )
+
+    moving = subparsers.add_parser(
+        "volatility",
+        help="fit a GARCH(1,1) and report what it forecasts",
+        description=(
+            "Fits a conditional volatility model by maximum likelihood. The "
+            "horizon figure is what square-root-of-time approximates, and the "
+            "ratio between them says by how much and in which direction."
+        ),
+    )
+    common(moving)
+    moving.add_argument(
+        "--column", default=None, help="fit this column rather than the portfolio"
+    )
+    moving.add_argument(
+        "--horizon", type=int, default=10, help="periods ahead to aggregate. Defaults to 10."
+    )
+    moving.add_argument(
+        "--variance-targeting",
+        action="store_true",
+        help="fix the long-run variance to the sample variance and estimate only "
+        "the two dynamic parameters, which is more robust on a short sample",
     )
 
     checked = subparsers.add_parser(

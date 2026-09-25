@@ -120,6 +120,7 @@ shortfall parity        returns.csv --shrink
 shortfall drawdown      returns.csv --periods 252
 shortfall factors       returns.csv --factors factors.csv
 shortfall validate      forecasts.csv --es-column es --replications 2000
+shortfall volatility    returns.csv --horizon 250 --column fund
 shortfall --json risk   returns.csv          # for anything downstream
 ```
 
@@ -234,6 +235,74 @@ signed and forecasts are positive losses, the same convention `Risk` uses, so a
 breach is `observed < -forecast`. A forecast column of negative numbers is
 refused rather than scored, because it is the sign convention being crossed and
 not a model predicting gains.
+
+### A volatility process, because the independence test asks for one
+
+When `validate` rejects on independence, the answer is not to rescale
+anything. It is that the model has no notion of volatility changing and needs
+one. `shortfall.volatility` is that notion.
+
+```python
+from shortfall import fit_garch, validate
+
+fitted = fit_garch(returns)
+fitted.persistence        # 0.988
+fitted.half_life          # 59 periods — a shock is half gone in three months
+result = validate(
+    returns,
+    [2.326 * v for v in fitted.volatilities],
+    confidence=0.99,
+)
+```
+
+What was here already is `ewma_volatility` at a decay of 0.94. That is a
+filter, not a model, and the gap shows in three places: the decay is assumed
+rather than estimated, a shock never decays towards anything, and — because
+there is no long-run level — the forecast is *flat at every horizon*. GARCH
+adds the term that fixes all three:
+
+    variance[t] = omega + alpha * residual[t-1]^2 + beta * variance[t-1]
+
+EWMA is the boundary case `omega = 0`, `alpha + beta = 1`: a process with
+infinite unconditional variance, which is exactly why it cannot mean-revert.
+
+**Does it actually fix what it is for?** Mostly. Over twenty independent
+regime-switching samples of 2000 observations:
+
+| | breaches (20 expected) | independence rejected |
+|---|---|---|
+| constant forecast | ~51 | **17 / 20** |
+| GARCH forecast | ~28 | **1 / 20** |
+
+The clustering is essentially gone. The *count* is halved rather than fixed,
+because a Gaussian GARCH still understates the tail of a series whose
+standardised residuals are fat. Saying it was fixed would have been the easy
+claim and it is not what the numbers say.
+
+**Square-root-of-time is not a rounding correction.** Starting at four times
+the long-run variance with a persistence of 0.975, a one-year horizon
+volatility is **39% below** what scaling today's volatility by the square root
+of time gives. Ten days is 4% below. In a calm market the error runs the other
+way, and that is the expensive direction: it understates risk while positions
+are going on rather than coming off.
+
+**A finding about the test, not the model.** Over thirty samples, a constant
+forecast is rejected on independence 29 times against a regime-switching
+series and only 13 times against a GARCH(1,1) at realistic parameters — even
+though volatility plainly clusters in both. A passing independence test is not
+evidence that volatility is constant; it says the breaches did not arrive
+together, which is weaker than it looks.
+
+Two implementation decisions worth the words. The constraints go in a
+**parameter transform** rather than a penalty — `omega` is an exponential, the
+persistence a capped logistic, and a second logistic splits it between `alpha`
+and `beta` — so the boundary is at infinity in the free coordinates and no
+step can reach it. A penalty lets the optimiser evaluate a persistence of 1.4
+and reflect back, and on a persistent series the optimum sits close enough to
+the boundary that it never settles. And Nelder-Mead stops on the **size of the
+simplex** as well as the spread of its values, because on this surface the
+vertices can agree to twelve digits while still far apart in the persistence
+direction — the parameters wrong and the likelihood saying they are right.
 
 ### Shrinkage, and saying how much of it happened
 
