@@ -119,6 +119,7 @@ shortfall contributions returns.csv --weights 0.4,0.25,0.15,0.2
 shortfall parity        returns.csv --shrink
 shortfall drawdown      returns.csv --periods 252
 shortfall factors       returns.csv --factors factors.csv
+shortfall validate      forecasts.csv --es-column es --replications 2000
 shortfall --json risk   returns.csv          # for anything downstream
 ```
 
@@ -162,6 +163,77 @@ integration, so the numerics cannot quietly move a number that has been in print
 since 2016.
 
 ## Design
+
+### Scoring a model against what happened
+
+Every estimator in this library produces a forecast. `shortfall.backtest` is
+the part that asks, once the period has passed, whether the forecast was worth
+anything.
+
+```python
+from shortfall import normal_risk, validate
+
+estimate = normal_risk(mean=0.0, volatility=0.012, confidence=0.99)
+result = validate(
+    realised_returns,
+    [estimate.value_at_risk] * len(realised_returns),
+    confidence=0.99,
+    expected_shortfall=[estimate.expected_shortfall] * len(realised_returns),
+)
+result.rejected_at(0.05)      # ('independence', 'conditional coverage')
+result.traffic_light.zone     # Zone.YELLOW
+```
+
+A value at risk only directly claims a *frequency*, and that claim splits into
+two that fail for different reasons and need different fixes.
+
+**Coverage** is whether there are about the right number of breaches. Kupiec's
+likelihood ratio tests it, and a model with the wrong volatility fails it.
+
+**Independence** is whether the breaches are spread out. This is the one worth
+having. A model that assumes constant volatility can get the count exactly
+right over a year and put every breach in the same fortnight, and a count
+cannot tell the difference. Christoffersen's Markov test can, and the simulated
+power here is 0.90 against a clustered process whose unconditional rate is the
+correct 1% — where the count alone rejects 0.17 of the time.
+
+That 0.17 is not nothing, and it is not a bug in either test: clustering makes
+the breach count overdispersed relative to the binomial Kupiec's null assumes,
+so some samples land far enough from 1% to be rejected on the count. The point
+is the gap, and that independence names the actual defect.
+
+The supervisory traffic-light zones are derived from the binomial rather than
+transcribed. The published table is a table of counts for 250 observations at
+99%; the rule underneath it is about cumulative probability, and deriving it
+reproduces those counts exactly while also answering for a sample that is not
+250 days long — three breaches is comfortably green over 250 days and yellow
+over 125. The capital add-on goes the other way. Those values are tabulated
+with no formula behind them, so they are returned for the setup they are
+published for and `None` anywhere else, rather than extrapolated into a number
+that would look official and mean nothing.
+
+Expected shortfall is harder, and not because of effort. Value at risk is
+*elicitable* — there is a scoring function minimised in expectation by the true
+quantile, which is exactly what makes a breach count a test. Expected shortfall
+is not, so there is no equivalent statistic. The two Acerbi-Székely statistics
+compare realised tail losses against the forecast tail mean directly; both are
+zero under a correct model and negative when the tail is understated. Neither
+has a closed-form null, so one is simulated from the same predictive
+distribution the forecasts came from.
+
+Two measured facts about those statistics, because both are easy to guess wrong.
+Test 1 reads **-0.245** when the true volatility is *double* the forecast — it
+is a ratio of tail means, and a normal's conditional tail mean grows slowly
+once the threshold is already inside the distribution, so a small number there
+is a large error. And an *overstated* tail can barely be tested: a forecast
+twice too wide produces zero breaches in four thousand observations, and a
+statistic read off zero breaches is not evidence about anything.
+
+The sign convention is the thing to get right before any of this. Returns are
+signed and forecasts are positive losses, the same convention `Risk` uses, so a
+breach is `observed < -forecast`. A forecast column of negative numbers is
+refused rather than scored, because it is the sign convention being crossed and
+not a model predicting gains.
 
 ### Shrinkage, and saying how much of it happened
 
