@@ -81,7 +81,7 @@ def test_mismatched_lengths_say_which_is_which() -> None:
 def test_non_finite_inputs_are_refused(bad: float) -> None:
     with pytest.raises(BadForecast, match="finite"):
         exceedances([bad], [0.02], confidence=CONFIDENCE)
-    with pytest.raises(BadForecast, match="finite|positive"):
+    with pytest.raises(BadForecast, match=r"finite|positive"):
         exceedances([0.01], [bad], confidence=CONFIDENCE)
 
 
@@ -583,7 +583,7 @@ def test_the_student_t_null_is_standardised_to_unit_variance() -> None:
 
 def test_a_student_t_null_needs_a_finite_variance() -> None:
     var, es = normal_forecast(0.01)
-    with pytest.raises(BadForecast, match="finite\n?\\s*variance|finite variance"):
+    with pytest.raises(BadForecast, match=r"finite\s+variance"):
         simulate_expected_shortfall_null(
             [var] * 10,
             [es] * 10,
