@@ -382,6 +382,7 @@ def fit_garch(
     variance_targeting: bool = False,
     mean: float | None = None,
     strict: bool = True,
+    max_iterations: int = 4000,
 ) -> Garch:
     """Fit a GARCH(1,1) by maximum likelihood.
 
@@ -441,7 +442,9 @@ def fit_garch(
         math.log(persistence / (MAX_PERSISTENCE - persistence)),
         math.log(weight / (1.0 - weight)),
     ]
-    best, negative, iterations, converged = _nelder_mead(objective, start)
+    best, negative, iterations, converged = _nelder_mead(
+        objective, start, max_iterations=max_iterations
+    )
     if strict and not converged:
         raise DidNotConverge(
             f"the likelihood optimiser did not converge in {iterations} iterations. "
