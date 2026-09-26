@@ -102,6 +102,16 @@ from .historical import (
     historical_risk,
     sample_expected_shortfall,
 )
+from .horizon import (
+    BATCHES,
+    MAX_PATHS,
+    MAX_TOTAL_STEPS,
+    MIN_OBSERVED_RESIDUALS,
+    MIN_PATHS,
+    HorizonRisk,
+    Innovations,
+    horizon_risk,
+)
 from .linalg import (
     NotPositiveDefinite,
     NotSquare,
@@ -156,8 +166,13 @@ __version__ = "0.1.0"
 __all__ = [
     "ADVISORY_MINIMUM",
     "ANNUAL",
+    "BATCHES",
     "DAILY_CALENDAR",
     "DAILY_TRADING",
+    "MAX_PATHS",
+    "MAX_TOTAL_STEPS",
+    "MIN_OBSERVED_RESIDUALS",
+    "MIN_PATHS",
     "MONTHLY",
     "QUARTERLY",
     "WEEKLY",
@@ -178,7 +193,9 @@ __all__ = [
     "Filtered",
     "Garch",
     "HistoricalRisk",
+    "HorizonRisk",
     "Innovation",
+    "Innovations",
     "Interval",
     "Misaligned",
     "NegativeContribution",
@@ -239,6 +256,7 @@ __all__ = [
     "garch_variances",
     "historical_risk",
     "historical_shortfall_contributions",
+    "horizon_risk",
     "independence",
     "is_positive_semidefinite",
     "least_squares",
