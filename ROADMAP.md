@@ -172,3 +172,53 @@ constant forecast is caught 29 times on a regime-switching series and 13 times
 on a GARCH at realistic parameters. The independence test is much weaker
 against smooth volatility than against regime switches, so passing it is not
 evidence that volatility is constant.
+
+## Phase 12 — The innovation distribution
+
+The last phase halved the breach excess and left the other half on the table.
+The variance process was the part that was missing; the *shape* drawn at that
+variance was still normal, so the 99% point of a standardised residual was read
+off as 2.326 whatever the residuals looked like.
+
+- [x] The Student-t density standardised to unit variance, so the shape
+      parameter cannot rescale the variance the recursion is carrying
+- [x] The degrees of freedom estimated inside the same likelihood as the
+      variance parameters, not fitted to the residuals afterwards
+- [x] Conditional value at risk and expected shortfall from the fitted model,
+      in the innovation distribution rather than in a normal quantile applied
+      to its volatility
+- [x] A likelihood ratio test of whether the fat tail is there, since the two
+      models are nested
+- [x] An unidentified estimate reported as unidentified rather than as a number
+- [x] `--innovation auto`, which tests before it assumes
+
+Measured, over the same twenty regime-switching samples as phase 11.
+
+The 99% breach count falls from 28.2 per two thousand observations to 22.45
+against a nominal 20 — the excess over nominal from 8.2 to 2.45, so about 70%
+of what the variance model left behind. The independence verdict is unchanged
+at one rejection in twenty, which is what should happen: the quantile moved and
+the clustering stayed fixed.
+
+The residue is not noise. A GARCH fitted to a regime-switching series does not
+have identically distributed standardised residuals, because the process is not
+a GARCH; one tail index for the whole sample is closer than a normal's and still
+an approximation.
+
+On data that never had a fat tail the two agree to within half a breach in
+twenty — 19.75 against 19.25 — because the estimate goes to the cap where the
+density is the normal's to four decimal places. That is the half of the claim
+that stops "widen every forecast by 10%" from passing for the same result.
+
+The test is conservative and the reason is structural: the null puts the inverse
+degrees of freedom at zero, which is the boundary of the parameter space, so the
+asymptotic null is a half-and-half mixture of chi-square with zero and one
+degrees of freedom rather than chi-square with one. Read against chi-square with
+one it reports about twice the true probability. Measured over 200 samples with
+Gaussian innovations, a nominal 5% test rejected 5 times.
+
+The cap has one visible consequence worth stating. The normal is the limit of
+the Student-t family and the cap stops short of it, so on a thin-tailed series
+the best admissible t is fractionally worse than the normal and the statistic
+comes out slightly negative — about 7e-5 nats per observation. The p-value
+clamps it at zero.

@@ -19,6 +19,7 @@ from shortfall.distributions import (
     normal_pdf,
     normal_ppf,
     regularised_incomplete_beta,
+    standardised_t_log_pdf,
     student_t_cdf,
     student_t_pdf,
     student_t_ppf,
@@ -203,3 +204,85 @@ def test_non_positive_degrees_of_freedom_are_refused(degrees: float) -> None:
 def test_a_student_t_probability_outside_the_unit_interval_is_refused(p: float) -> None:
     with pytest.raises(OutOfDomain, match=r"\(0, 1\)"):
         student_t_ppf(p, 5.0)
+
+
+# -- the standardised Student-t density --------------------------------------
+
+
+@pytest.mark.parametrize("degrees", [2.5, 4.0, 5.0, 30.0, 300.0])
+def test_the_standardised_density_is_the_change_of_variables(degrees: float) -> None:
+    """``f_Z(z) = c f_T(c z)`` exactly, with ``c = sqrt(v / (v - 2))``.
+
+    Written independently here: the implementation folds the scale into the
+    normalising constant, this multiplies it out.
+    """
+    scale = math.sqrt(degrees / (degrees - 2.0))
+    for z in (-4.0, -1.0, 0.0, 0.5, 2.2):
+        assert math.exp(standardised_t_log_pdf(z, degrees)) == pytest.approx(
+            scale * student_t_pdf(scale * z, degrees), rel=1e-12
+        )
+
+
+@pytest.mark.parametrize("degrees", [3.0, 6.0, 25.0])
+def test_the_standardised_density_integrates_to_one_and_has_unit_variance(
+    degrees: float,
+) -> None:
+    """The two properties that make it usable in a variance-parameterised model.
+
+    Simpson's rule over a symmetric interval, which truncates rather than
+    approximates: everything outside the interval is simply missing, so both
+    integrals come out *below* their true value and never above it.
+
+    The mass converges quickly enough that the truncation is invisible at 1e-6.
+    The second moment does not, and the reason is the fat tail itself. At three
+    degrees of freedom the standardised density falls off like ``z^-4``, so the
+    integrand of the variance falls off like ``z^-2`` and the tail beyond
+    ``limit`` carries of order ``1 / limit`` of the total. Measured at
+    ``limit = 400`` the second moment is 0.99682, a deficit of 1.3/limit, and
+    the bound below allows 2/limit in that direction and 1e-6 in the other.
+    That asymmetry is the assertion: a fat tail can only be under-counted here.
+    """
+    limit, steps = 400.0, 400_000
+    step = 2.0 * limit / steps
+    mass = 0.0
+    second = 0.0
+    for index in range(steps + 1):
+        z = -limit + index * step
+        weight = 1.0 if index in (0, steps) else (4.0 if index % 2 else 2.0)
+        density = math.exp(standardised_t_log_pdf(z, degrees))
+        mass += weight * density
+        second += weight * z * z * density
+    mass *= step / 3.0
+    second *= step / 3.0
+    assert mass == pytest.approx(1.0, abs=1e-6)
+    assert 1.0 - 2.0 / limit <= second <= 1.0 + 1e-6
+
+
+def test_the_standardised_density_approaches_the_normal_at_the_rate_1_over_v() -> None:
+    """The departure from normal shrinks like ``1 / v``, and is measured saying so.
+
+    Not "agrees to six figures", which would be wrong: at 10,000 degrees of
+    freedom the relative departure is 7.5e-5 at the centre and 7.5e-4 at three
+    standard deviations, because the implied excess kurtosis is ``6 / (v - 4)``
+    and the standardising factor is ``1 + 1/v + O(v^-2)``. Both are first order
+    in ``1/v``, so raising ``v`` tenfold divides the departure by ten — which is
+    what this asserts, at two decades apart.
+
+    This is the fact behind reporting an unidentified fit rather than a number:
+    the likelihood at ``v = 1000`` and at ``v = 10,000`` differ by a thousandth
+    of a nat per observation, so the optimiser has nothing to find up there.
+    """
+    for z in (-3.0, -1.0, 0.0, 2.0):
+        reference = normal_pdf(z)
+        near = abs(math.exp(standardised_t_log_pdf(z, 1_000.0)) - reference) / reference
+        far = abs(math.exp(standardised_t_log_pdf(z, 10_000.0)) - reference) / reference
+        assert near == pytest.approx(10.0 * far, rel=0.02)
+        assert far < 1e-3
+
+
+@pytest.mark.parametrize("degrees", [2.0, 1.5, 0.0, -3.0])
+def test_the_standardised_density_refuses_degrees_without_a_variance(
+    degrees: float,
+) -> None:
+    with pytest.raises(OutOfDomain, match="greater than 2"):
+        standardised_t_log_pdf(0.0, degrees)

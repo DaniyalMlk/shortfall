@@ -121,6 +121,7 @@ shortfall drawdown      returns.csv --periods 252
 shortfall factors       returns.csv --factors factors.csv
 shortfall validate      forecasts.csv --es-column es --replications 2000
 shortfall volatility    returns.csv --horizon 250 --column fund
+shortfall volatility    returns.csv --innovation student-t --confidence 0.995
 shortfall --json risk   returns.csv          # for anything downstream
 ```
 
@@ -278,6 +279,72 @@ The clustering is essentially gone. The *count* is halved rather than fixed,
 because a Gaussian GARCH still understates the tail of a series whose
 standardised residuals are fat. Saying it was fixed would have been the easy
 claim and it is not what the numbers say.
+
+### The shape drawn at that volatility
+
+Halving the breach excess left the other half on the table, and the other half
+is the innovation distribution. The variance process says how the *scale* moves;
+it says nothing about the shape drawn at that scale, and with a Gaussian
+likelihood the 99% point of a standardised residual is 2.326 whatever the
+residuals look like.
+
+```python
+from shortfall import Innovation, fat_tail_test, fit_garch
+
+verdict = fat_tail_test(returns)
+verdict.fat                    # True
+verdict.degrees_of_freedom     # 4.1
+
+fitted = fit_garch(returns, innovation=Innovation.STUDENT_T)
+fitted.risk(confidence=0.99)   # Risk(value_at_risk=..., expected_shortfall=...)
+```
+
+The degrees of freedom are estimated **in the same likelihood** as the variance
+parameters rather than fitted to the residuals afterwards: a normal likelihood
+over-weights the largest residuals of a fat-tailed series enough to pull `alpha`
+up, so a two-stage fit gets the tail right and the dynamics wrong. The density
+used is the Student-t **standardised to unit variance**, so the shape parameter
+cannot quietly rescale the variance the recursion is carrying — an unscaled `t`
+would be 22% out at five degrees of freedom and the recursion would absorb it.
+
+Same twenty regime-switching samples, 99% forecasts, 20 breaches expected:
+
+| | breaches | excess over nominal | independence rejected |
+|---|---|---|---|
+| constant forecast | ~51 | 31 | **17 / 20** |
+| GARCH, normal innovations | 28.2 | 8.2 | **1 / 20** |
+| GARCH, estimated tail | 22.45 | 2.45 | **1 / 20** |
+
+About 70% of what the variance model left behind, and the clustering verdict
+does not move — the quantile changed, not the dynamics. The residue is not noise
+either: a GARCH fitted to a regime-switching series does not have identically
+distributed standardised residuals, because the process is not a GARCH.
+
+**The other half of the claim.** On data that never had a fat tail the two agree
+to within half a breach in twenty, 19.75 against 19.25, because the estimate goes
+to the cap where the density is the normal's to four decimals. Without that
+number, "multiply every forecast by 1.1" would have produced the table above.
+
+**Whether to fit it at all is a test, not a preference.** The models are nested,
+so the likelihood ratio answers it, and `--innovation auto` runs it. The p-value
+is conservative for a structural reason: the null puts the inverse degrees of
+freedom at zero, on the boundary of the parameter space, so the asymptotic null
+is a half-and-half mixture of chi-square with zero and one degrees of freedom.
+Read against chi-square with one it reports about twice the true probability.
+Over 200 samples with Gaussian innovations a nominal 5% test rejected 5 times,
+which is the 2.5% that halving predicts.
+
+**A large estimate is not a fat tail.** Above 200 degrees of freedom the density
+is within a percent of the normal everywhere that matters, so the likelihood is
+flat and whatever the optimiser stops at is noise. `degrees_identified` is false
+there and the number is withheld rather than reported, because "our fitted tail
+index is 640" is a claim about a series that is simply Gaussian.
+
+The expected shortfall gap is always the larger of the two. At five degrees of
+freedom the 99% value at risk is 12.0% above the normal figure and the expected
+shortfall 29.4% above; at 99.5% they are 21.3% and 40.6%. A desk that checks its
+value at risk against breach counts and never looks at the expected shortfall has
+been measuring the smaller of the two errors.
 
 **Square-root-of-time is not a rounding correction.** Starting at four times
 the long-run variance with a persistence of 0.975, a one-year horizon
