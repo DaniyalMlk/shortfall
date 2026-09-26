@@ -153,6 +153,32 @@ def student_t_pdf(x: float, degrees: float) -> float:
     return math.exp(log_norm - ((degrees + 1.0) / 2.0) * math.log1p(x * x / degrees))
 
 
+def standardised_t_log_pdf(z: float, degrees: float) -> float:
+    """Log density of a Student-t rescaled to unit variance.
+
+    The variable is ``Z = T / sqrt(v / (v - 2))`` with ``T`` a standard
+    Student-t, so ``Z`` has variance one for every admissible ``v`` and the
+    shape parameter changes only the tail. That separation is what makes this
+    the right density for a likelihood whose *scale* is already carried by a
+    variance process: fitting with the unscaled ``t`` instead would let the
+    degrees of freedom quietly rescale the variance — 22% at five degrees of
+    freedom — and every parameter of the variance recursion would absorb it.
+
+    The change of variables is ``f_Z(z) = c * f_T(c * z)`` with
+    ``c = sqrt(v / (v - 2))``, written out in logs so the two gamma functions
+    in the normalising constant never overflow. Requires ``v > 2``, below which
+    there is no variance to standardise to.
+    """
+    _check_degrees(degrees, minimum=2.0)
+    scaled = degrees - 2.0
+    return (
+        math.lgamma((degrees + 1.0) / 2.0)
+        - math.lgamma(degrees / 2.0)
+        - 0.5 * math.log(math.pi * scaled)
+        - ((degrees + 1.0) / 2.0) * math.log1p(z * z / scaled)
+    )
+
+
 def student_t_cdf(x: float, degrees: float) -> float:
     """The standard Student-t distribution function.
 
@@ -467,6 +493,7 @@ __all__ = [
     "normal_ppf",
     "regularised_incomplete_beta",
     "regularised_incomplete_gamma",
+    "standardised_t_log_pdf",
     "student_t_cdf",
     "student_t_pdf",
     "student_t_ppf",
