@@ -753,7 +753,7 @@ def test_the_horizon_simulation_explains_why_it_is_not_a_scaling(tmp_path: Path)
     output = stream.getvalue()
     assert "Horizon risk over" in output
     assert "quantile vs square-root-of-time" in output
-    assert "No fixed multiplier gets both" in output
+    assert "consistently wrong" in output
 
 
 def test_the_two_draws_give_different_horizon_figures(tmp_path: Path) -> None:

@@ -897,10 +897,13 @@ def command_volatility(arguments: argparse.Namespace, stream: TextIO) -> dict[st
             "pushes the quantile above the scaled figure. And summing the "
             "horizon's innovations pulls the total towards normality, while the "
             "one-step quantile keeps the whole of the innovation's own tail; "
-            "that pushes it below. Measured over five samples at ten steps, the "
-            "quantile came to 1.08 times the scaled figure under normal "
-            "innovations and 0.97 times it under a fitted tail near four and a "
-            "half degrees of freedom. No fixed multiplier gets both.",
+            "that pushes it below. Measured over ten samples at ten steps, the "
+            "quantile averaged 1.07 times the scaled figure under normal "
+            "innovations and exceeded it on all ten; under a fitted tail near "
+            "four and a half degrees of freedom it averaged 0.99 and exceeded it "
+            "on four of ten. So the direction is dependable in one case and not "
+            "in the other, and no multiplier on a scaled volatility is even "
+            "consistently wrong.",
             file=stream,
         )
 

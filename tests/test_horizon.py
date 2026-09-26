@@ -494,29 +494,48 @@ def test_the_horizon_quantile_crosses_square_root_of_time_in_both_directions() -
     square-root-of-time figure. **Aggregation** pulls the total towards normality
     while the one-step quantile keeps the whole of the innovation's own tail, which
     pushes it *below*. Under normal innovations only the first operates; under a fat
-    tail the second dominates.
+    tail the second cancels most of it.
 
-    Measured over five samples at ten steps and 30,000 paths: the quantile came to
-    1.083 times the scaled figure on Gaussian data with parametric draws, and 0.966
-    times it on ``t(4.5)`` data with a fitted Student-t. The volatility comparison
-    does not change sign between those two cases, so no adjustment applied to a
-    scaled volatility reproduces either.
+    Measured over ten samples at ten steps and 30,000 paths with parametric draws.
+    Under normal innovations: mean 1.074, range 1.011 to 1.150, above one on all
+    ten. Under ``t(4.5)``: mean 0.986, range 0.930 to 1.025, above one on four of
+    ten.
+
+    So the direction is *reliable in one case and not in the other*, which is a
+    stronger argument for simulating than a clean sign change would have been — a
+    caller cannot pick a multiplier that is even consistently wrong. The assertions
+    below are on three samples each: that the normal case clears one every time,
+    that the fat case averages lower, and nothing about the fat case's sign on any
+    one series.
     """
-    thin = garch_path(count=2000, seed=9)
-    fat = student_t_path(count=2000, seed=9)
-    thin_fit = fit_garch(thin)
-    fat_fit = fit_garch(fat, innovation=Innovation.STUDENT_T)
-    assert fat_fit.degrees_identified
-
-    normal_innovations = horizon_risk(
-        thin_fit, thin, steps=10, paths=30_000, innovations=Innovations.PARAMETRIC, seed=3
-    )
-    fat_innovations = horizon_risk(
-        fat_fit, fat, steps=10, paths=30_000, innovations=Innovations.PARAMETRIC, seed=3
-    )
-    assert normal_innovations.quantile_against_square_root_of_time > 1.01
-    assert fat_innovations.quantile_against_square_root_of_time < 1.0
-    assert (
-        normal_innovations.quantile_against_square_root_of_time
-        > fat_innovations.quantile_against_square_root_of_time + 0.05
-    )
+    normal_ratios = []
+    fat_ratios = []
+    for offset in range(3):
+        thin = garch_path(count=2000, seed=9 + offset)
+        fat = student_t_path(count=2000, seed=9 + offset)
+        thin_fit = fit_garch(thin)
+        fat_fit = fit_garch(fat, innovation=Innovation.STUDENT_T)
+        assert fat_fit.degrees_identified
+        normal_ratios.append(
+            horizon_risk(
+                thin_fit,
+                thin,
+                steps=10,
+                paths=20_000,
+                innovations=Innovations.PARAMETRIC,
+                seed=3,
+            ).quantile_against_square_root_of_time
+        )
+        fat_ratios.append(
+            horizon_risk(
+                fat_fit,
+                fat,
+                steps=10,
+                paths=20_000,
+                innovations=Innovations.PARAMETRIC,
+                seed=3,
+            ).quantile_against_square_root_of_time
+        )
+    assert all(ratio > 1.0 for ratio in normal_ratios)
+    assert statistics.fmean(normal_ratios) > statistics.fmean(fat_ratios) + 0.04
+    assert statistics.fmean(fat_ratios) < 1.03

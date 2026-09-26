@@ -162,12 +162,19 @@ class HorizonRisk:
 
         The number worth looking at, and it does not agree with
         :attr:`scaling_against_square_root_of_time` — which is the finding.
-        Measured over ten independent runs of 40,000 paths at ten steps on a
+        Measured over ten independent runs of 40,000 paths at ten steps on one
         fitted GARCH: the horizon volatility came in 0.8% *below* the
         square-root-of-time figure (0.9922, spread 0.004) while the horizon value
         at risk came in 5.2% *above* it (1.0517, spread 0.008). Scaling the
         volatility is conservative there and scaling the quantile is not, in the
         same model on the same day.
+
+        Across *series* rather than across runs the picture is less tidy and the
+        untidiness is the point. Over ten samples with normal innovations the ratio
+        averaged 1.074 and exceeded one on all ten; over ten with a fitted tail near
+        four and a half degrees of freedom it averaged 0.986 and exceeded one on
+        four. The direction is dependable in one case and not in the other, so no
+        multiplier on a scaled volatility is even consistently wrong.
 
         The reason is that the variance path is stochastic rather than its own
         expectation. A large draw early in the horizon raises the variance for
