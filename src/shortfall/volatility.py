@@ -629,8 +629,12 @@ def fit_garch(
 class FatTail:
     """Whether the innovations need a fat tail, by likelihood ratio."""
 
-    #: ``2 * (log L under t - log L under normal)``, non-negative up to
-    #: optimiser error because the normal is the limit of the t.
+    #: ``2 * (log L under t - log L under normal)``. Very slightly negative is
+    #: possible and is not an error: the normal is the *limit* of the Student-t
+    #: family, and :data:`MAX_DEGREES` stops short of it, so on a series with no
+    #: fat tail the best admissible t is a hair worse than the normal. Measured
+    #: at the cap the cost is about 7e-5 nats per observation, which is -0.10 on
+    #: two thousand of them. The p-value clamps it at zero.
     statistic: float
     #: Upper tail of a chi-square with one degree of freedom at the statistic.
     #: **Conservative**, and the reason is structural rather than numerical: the

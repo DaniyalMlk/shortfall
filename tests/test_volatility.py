@@ -18,7 +18,7 @@ from itertools import pairwise
 import pytest
 
 from shortfall.backtest import validate
-from shortfall.distributions import normal_ppf
+from shortfall.distributions import normal_ppf, student_t_ppf
 from shortfall.historical import ewma_volatility
 from shortfall.parametric import normal_risk, student_t_risk
 from shortfall.series import ReturnSeries, TooShort
@@ -28,10 +28,12 @@ from shortfall.volatility import (
     MAX_PERSISTENCE,
     MIN_OBSERVATIONS,
     DidNotConverge,
+    FatTail,
     Garch,
     Innovation,
     _negative_log_likelihood,
     _nelder_mead,
+    fat_tail_test,
     fit_garch,
     garch_forecast_series,
     garch_variances,
@@ -733,3 +735,165 @@ def test_the_conditional_risk_moves_with_the_return_that_just_arrived() -> None:
     shock = fitted.risk(confidence=0.99, last_return=0.10)
     assert shock.value_at_risk > quiet.value_at_risk
     assert quiet.volatility == pytest.approx(math.sqrt(fitted.next_variance(0.0)))
+
+
+# -- is the fat tail real? ---------------------------------------------------
+
+
+def test_the_likelihood_ratio_finds_a_fat_tail_that_is_there() -> None:
+    """Power, on two thousand observations of ``t(5)`` innovations.
+
+    Measured over thirty independent samples: the test rejected on all thirty
+    and the median estimate was 5.07 degrees of freedom. One sample is asserted
+    here because thirty fits of two models each is a minute of test time for a
+    result that was unanimous.
+    """
+    verdict = fat_tail_test(simulate_student_t_garch(2000, degrees=5.0, seed=43))
+    assert verdict.fat
+    assert verdict.identified
+    assert verdict.p_value < 1e-6
+    assert verdict.statistic > 30.0
+    assert verdict.degrees_of_freedom == pytest.approx(5.0, rel=0.3)
+    assert verdict.student_t_log_likelihood > verdict.normal_log_likelihood
+
+
+def test_the_likelihood_ratio_does_not_find_a_fat_tail_that_is_not_there() -> None:
+    """Size, and the boundary problem behind the p-value being conservative.
+
+    The null puts ``1/v`` at zero, which is on the edge of the parameter space
+    rather than inside it, so the asymptotic null distribution of the statistic
+    is the mixture ``0.5 chi2(0) + 0.5 chi2(1)`` and not ``chi2(1)``. Reading it
+    against ``chi2(1)`` therefore reports about twice the true tail probability,
+    and the test is conservative by roughly a factor of two.
+
+    Measured over 200 Gaussian-innovation samples of 2,000 observations: a
+    nominal 5% test rejected 5 times, a rate of 2.5% — which is what the halving
+    predicts, to the sample's precision. The degrees of freedom came back
+    unidentified on 132 of the 200, so on two thirds of the samples the estimate
+    never left the flat region at all.
+
+    Twelve samples are run here. The bound allows two rejections, which at a
+    true rate of 2.5% is a generous ceiling and keeps the test from being flaky
+    about a fact established at larger scale above.
+
+    Ten of the twelve came back with a slightly *negative* statistic, worst
+    -0.098. That is the cap rather than a bug, and it is worth knowing: the
+    normal is the limit of the family and :data:`MAX_DEGREES` stops short of it,
+    so the best admissible Student-t on a thin-tailed series is a shade worse
+    than the normal. At fixed variance parameters the cost of the cap is 0.043
+    nats over these 1,200 observations — about 7e-5 each — which accounts for
+    the whole of what was observed, so the bound below is written in terms of the
+    sample size rather than as a constant.
+    """
+    rejections = 0
+    observations = 1200
+    for seed in range(60, 72):
+        verdict = fat_tail_test(simulate_garch(observations, seed=seed))
+        rejections += verdict.fat
+        assert verdict.statistic > -2e-4 * observations
+        assert 0.0 <= verdict.p_value <= 1.0
+    assert rejections <= 2
+
+
+def test_an_unidentified_tail_is_never_called_fat() -> None:
+    """Both halves of the verdict, with the p-value forced to say yes.
+
+    Constructed rather than sampled: a record whose p-value is zero and whose
+    estimate is at the cap. The sampled version of this is vanishingly rare —
+    there is no likelihood gain to be had up there — which is exactly why it is
+    worth pinning by construction instead of hoping a seed produces it.
+    """
+    assert not FatTail(
+        statistic=50.0,
+        p_value=0.0,
+        degrees_of_freedom=MAX_DEGREES,
+        identified=False,
+        normal_log_likelihood=100.0,
+        student_t_log_likelihood=125.0,
+    ).fat
+
+
+# -- the level of the breaches, which is what this was for --------------------
+
+
+def test_fat_innovations_bring_the_breach_count_down_towards_nominal() -> None:
+    """The measurement the module was extended for, over twenty samples.
+
+    A Gaussian GARCH on regime-switching data breaches its 99% forecast 28.2
+    times per two thousand observations against a nominal 20. Estimating the
+    innovation tail as well brings that to 22.45 — the excess over nominal falls
+    from 8.2 to 2.45, so about 70% of what was left after the variance model is
+    removed by the tail model.
+
+    Not all of it, and the residue is not noise: the standardised residuals of a
+    GARCH fitted to a regime-switching series are not identically distributed,
+    because the process is not a GARCH. A single tail index for the whole sample
+    is closer than one fixed at the normal's, and still an approximation.
+
+    The independence verdict is unchanged at one rejection in twenty, which is
+    the point: the quantile moved and the clustering the previous work fixed
+    stayed fixed.
+    """
+    samples = 20
+    normal_breaches = 0
+    student_breaches = 0
+    normal_rejections = 0
+    student_rejections = 0
+    for seed in range(40, 40 + samples):
+        data = regime_switching(2000, seed)
+        gaussian = fit_garch(data)
+        student = fit_garch(data, innovation=Innovation.STUDENT_T)
+        degrees = student.degrees_of_freedom
+        assert degrees is not None
+        # The standardised-t quantile: the raw t quantile brought back to unit
+        # variance. Using the raw one here would widen every forecast by 29% at
+        # four degrees of freedom and the breach count would undershoot.
+        student_quantile = -student_t_ppf(0.01, degrees) * math.sqrt((degrees - 2.0) / degrees)
+        flat = validate(data, [QUANTILE * v for v in gaussian.volatilities], confidence=0.99)
+        fat = validate(
+            data, [student_quantile * v for v in student.volatilities], confidence=0.99
+        )
+        normal_breaches += flat.exceedances.count
+        student_breaches += fat.exceedances.count
+        normal_rejections += flat.independence.rejects_at(0.05)
+        student_rejections += fat.independence.rejects_at(0.05)
+
+    assert 24.0 < normal_breaches / samples < 34.0
+    assert 19.0 < student_breaches / samples < 26.0
+    assert student_breaches < normal_breaches
+    assert student_rejections <= 3
+    assert normal_rejections <= 3
+
+
+def test_fat_innovations_do_not_widen_a_forecast_that_was_already_right() -> None:
+    """The other half of the claim: no cost when there is no fat tail.
+
+    On genuinely Gaussian GARCH data the breach count is 19.75 per two thousand
+    observations under normal innovations and 19.25 under estimated ones, both
+    against a nominal 20. Estimating a tail index that turns out not to be needed
+    costs half a breach in twenty, because the estimate goes to the cap where the
+    density is the normal's to four decimal places.
+
+    Without this the previous test would be satisfied by anything that widens
+    forecasts — including multiplying them by 1.1, which would also bring the
+    regime-switching count down and would be wrong.
+    """
+    samples = 10
+    normal_breaches = 0
+    student_breaches = 0
+    for seed in range(3000, 3000 + samples):
+        data = simulate_garch(2000, seed=seed)
+        gaussian = fit_garch(data)
+        student = fit_garch(data, innovation=Innovation.STUDENT_T)
+        degrees = student.degrees_of_freedom
+        assert degrees is not None
+        student_quantile = -student_t_ppf(0.01, degrees) * math.sqrt((degrees - 2.0) / degrees)
+        normal_breaches += validate(
+            data, [QUANTILE * v for v in gaussian.volatilities], confidence=0.99
+        ).exceedances.count
+        student_breaches += validate(
+            data, [student_quantile * v for v in student.volatilities], confidence=0.99
+        ).exceedances.count
+    assert 16.0 < normal_breaches / samples < 24.0
+    assert 16.0 < student_breaches / samples < 24.0
+    assert abs(student_breaches - normal_breaches) / samples < 2.0
