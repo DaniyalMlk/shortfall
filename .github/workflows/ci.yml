@@ -66,6 +66,7 @@ jobs:
           shortfall parity examples/returns.csv --shrink
           shortfall drawdown examples/returns.csv --periods 252
           shortfall factors examples/returns.csv --factors examples/factors.csv
+          shortfall volatility examples/returns.csv --weights 0.4,0.25,0.15,0.2
           shortfall --json risk examples/returns.csv > /dev/null
 
   package:
