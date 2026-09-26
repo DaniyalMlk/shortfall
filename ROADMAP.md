@@ -222,3 +222,50 @@ the Student-t family and the cap stops short of it, so on a thin-tailed series
 the best admissible t is fractionally worse than the normal and the statistic
 comes out slightly negative — about 7e-5 nats per observation. The p-value
 clamps it at zero.
+
+## Phase 13 — A horizon that is simulated rather than scaled
+
+One-step risk is a closed form and horizon risk is not. `Garch.risk` refused a
+horizon for the right reason — the sum of `h` innovations is not a member of the
+family they came from — and that refusal left a caller with an aggregate variance
+and no way to turn it into a quantile except the assumption just declined.
+
+- [x] Horizon value at risk and expected shortfall by running the recursion
+      forward and taking the quantile of the accumulated return
+- [x] Innovations drawn from the fitted family, or resampled from the model's own
+      standardised residuals, which assumes no tail shape
+- [x] A Monte Carlo standard error, reported rather than left to be guessed at
+- [x] Validated against every closed form that exists: one step under normal and
+      under Student-t innovations, and the horizon volatility against the
+      analytic aggregation at three horizons
+- [x] `--paths` on the command line, off by default
+- [x] The direction of the horizon effect measured, in both signs
+
+Measured, and the headline is that the sign is not a constant.
+
+Over five samples at ten steps and 30,000 paths the horizon value at risk came to
+1.083 times the square-root-of-time figure under normal innovations and 0.966
+times it under a fitted tail near four and a half degrees of freedom. Two effects
+pull against each other: the stochastic variance path makes the accumulated
+return leptokurtic — the ratio of value at risk to volatility goes from 2.334 at
+one step, which is the normal's 2.326 as it must be, to 2.480 at ten — while
+aggregation pulls the total towards normality when the innovation itself is fat.
+The volatility comparison does not change sign between the two cases, so no
+multiplier applied to a scaled volatility reproduces either.
+
+The same aggregation makes the innovation's shape matter much less over a horizon
+than over a day. Resampling the standardised residuals instead of drawing normals
+raises the expected shortfall by 22% at one step and by 7% at ten. A one-step tail
+adjustment does not scale to a horizon whatever it is multiplied by.
+
+The error bar is the part that needed the most care and is reported as a lower
+bound. It is the spread across twenty batches, which needs no density estimate at
+the quantile, and over 30 independent runs at ten steps it came to 0.89 of the
+observed spread of the reported figure at 20,000 paths — inside the 13% precision
+of a 30-run standard deviation — and 0.73 of it at 2,000 paths, where a batch of a
+hundred paths estimates a 99% quantile from its own single worst path.
+
+The bootstrap floor is 250 residuals rather than the fit's own 100. A bootstrap
+cannot draw past the worst residual it holds, so at a hundred residuals a 99%
+figure sits on the boundary of the data instead of inside it. Below that the
+parametric draw is the honest route: it extrapolates, and says so.

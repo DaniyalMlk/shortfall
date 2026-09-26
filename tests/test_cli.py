@@ -708,3 +708,83 @@ def test_volatility_says_so_when_it_finds_no_fat_tail(tmp_path: Path) -> None:
     assert "No fat tail was found" in output
     assert "conservative" in output
     assert "not identified" in output
+
+
+def test_volatility_simulates_a_horizon_when_asked(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    assert main(
+        [
+            "--json",
+            "volatility",
+            str(garch_file(tmp_path / "v.csv")),
+            "--paths",
+            "4000",
+            "--horizon",
+            "10",
+        ],
+        stream=stream,
+    ) == 0
+    payload = json.loads(stream.getvalue())
+    simulated = payload["horizonRisk"]
+    assert simulated["paths"] == 4000
+    assert simulated["draw"] == "bootstrap"
+    assert simulated["expectedShortfall"] > simulated["valueAtRisk"] > 0.0
+    assert 0.0 < simulated["standardError"] < simulated["valueAtRisk"]
+    # The simulated and analytic horizon volatilities are the same quantity
+    # measured two ways, so they have to agree.
+    assert simulated["simulatedVolatility"] == pytest.approx(
+        simulated["analyticVolatility"], rel=0.05
+    )
+    json.dumps(payload, allow_nan=False)
+
+
+def test_the_horizon_simulation_is_off_unless_asked_for(tmp_path: Path) -> None:
+    """It costs paths times steps of work, so it is not on the default path."""
+    stream = io.StringIO()
+    assert main(["--json", "volatility", str(garch_file(tmp_path / "v.csv"))], stream=stream) == 0
+    assert "horizonRisk" not in json.loads(stream.getvalue())
+
+
+def test_the_horizon_simulation_explains_why_it_is_not_a_scaling(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    assert main(
+        ["volatility", str(garch_file(tmp_path / "v.csv")), "--paths", "4000"], stream=stream
+    ) == 0
+    output = stream.getvalue()
+    assert "Horizon risk over" in output
+    assert "quantile vs square-root-of-time" in output
+    assert "No fixed multiplier gets both" in output
+
+
+def test_the_two_draws_give_different_horizon_figures(tmp_path: Path) -> None:
+    path = fat_garch_file(tmp_path / "f.csv")
+    figures = {}
+    for draw in ("bootstrap", "parametric"):
+        stream = io.StringIO()
+        assert main(
+            ["--json", "volatility", str(path), "--paths", "4000", "--draw", draw],
+            stream=stream,
+        ) == 0
+        figures[draw] = json.loads(stream.getvalue())["horizonRisk"]
+        assert figures[draw]["draw"] == draw
+    assert figures["bootstrap"]["valueAtRisk"] != figures["parametric"]["valueAtRisk"]
+
+
+def test_a_path_count_the_simulation_refuses_is_reported_not_raised(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Below the floor the tail of the simulation is a handful of paths.
+
+    Reported as a sentence naming the problem rather than as a traceback, which is
+    what the rest of this interface does with every other refusal.
+    """
+    assert (
+        main(
+            ["volatility", str(garch_file(tmp_path / "v.csv")), "--paths", "50"],
+            stream=io.StringIO(),
+        )
+        == 2
+    )
+    error = capsys.readouterr().err
+    assert "paths must be between" in error
+    assert "quantile of anything" in error

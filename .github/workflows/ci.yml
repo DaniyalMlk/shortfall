@@ -67,6 +67,7 @@ jobs:
           shortfall drawdown examples/returns.csv --periods 252
           shortfall factors examples/returns.csv --factors examples/factors.csv
           shortfall volatility examples/returns.csv --weights 0.4,0.25,0.15,0.2
+          shortfall volatility examples/returns.csv --paths 5000 --horizon 10
           shortfall --json risk examples/returns.csv > /dev/null
 
   package:
