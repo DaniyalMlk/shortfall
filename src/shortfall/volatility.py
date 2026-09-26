@@ -34,10 +34,30 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
 from typing import Final
 
+from .distributions import chi_square_sf, standardised_t_log_pdf
+from .parametric import Risk, normal_risk, student_t_risk
 from .series import ReturnSeries, TooShort
+
+
+class Innovation(str, Enum):
+    """The distribution the standardised residuals are assumed to follow.
+
+    This is a separate question from the variance recursion, and mixing the two
+    up is the mistake the option exists to prevent. The recursion says how the
+    *scale* moves; the innovation says what shape is drawn at that scale. Fit a
+    fat-tailed series under ``NORMAL`` and the variance path still comes out
+    about right — the breaches cluster no worse than they should — while every
+    quantile taken from it is too close in, because the 99% point of a
+    standardised residual is being read off as 2.326 whatever the residuals
+    actually look like.
+    """
+
+    NORMAL = "normal"
+    STUDENT_T = "student-t"
 
 #: Fewest observations a fit will attempt. Three parameters from fewer than
 #: this is not an estimate; the likelihood surface is nearly flat along the
@@ -49,6 +69,26 @@ MIN_OBSERVATIONS: Final = 100
 #: transform approaches it asymptotically, so this caps it away from the
 #: boundary where the long-run variance and the half-life both blow up.
 MAX_PERSISTENCE: Final = 0.999_9
+
+#: Fewest degrees of freedom the transform will produce. Below two there is no
+#: variance for the density to be standardised against, and the likelihood of a
+#: series with a genuinely infinite variance is not something this model should
+#: report a fit for. Kept clear of the boundary, where the fourth moment is also
+#: gone and the surface is very steep.
+MIN_DEGREES: Final = 2.1
+
+#: Most degrees of freedom the transform will produce. Not a modelling claim: at
+#: this many the density is within 1e-4 of the normal everywhere inside three
+#: standard deviations, so the likelihood is flat above it and any number the
+#: optimiser returns there is noise. Hitting the cap is reported rather than
+#: passed off as an estimate — see :attr:`Garch.degrees_identified`.
+MAX_DEGREES: Final = 1_000.0
+
+#: Above this the estimate is called unidentified. Chosen from the same measured
+#: fact: the standardised-t density departs from the normal at order ``1/v``, so
+#: at 200 the departure is under a percent even in the tail, and the likelihood
+#: cannot separate 200 from 400 on any sample this model is fitted to.
+IDENTIFIED_DEGREES: Final = 200.0
 
 _LOG_2PI: Final = math.log(2.0 * math.pi)
 
@@ -82,6 +122,72 @@ class Garch:
     #: True when the long-run level was fixed to the sample variance rather
     #: than estimated.
     variance_targeted: bool
+    #: The shape assumed for the standardised residuals.
+    innovation: Innovation = Innovation.NORMAL
+    #: Estimated degrees of freedom, or ``None`` under normal innovations.
+    degrees_of_freedom: float | None = field(default=None)
+
+    @property
+    def degrees_identified(self) -> bool:
+        """Whether the degrees of freedom mean anything.
+
+        False under normal innovations, and false when the estimate came back
+        above :data:`IDENTIFIED_DEGREES`, where the likelihood is flat: the data
+        did not find a fat tail, and the number the optimiser stopped at is not
+        evidence of where the tail is. A caller reading
+        :attr:`degrees_of_freedom` without checking this can report "our fitted
+        tail index is 640" about a series that is simply Gaussian.
+        """
+        return self.degrees_of_freedom is not None and self.degrees_of_freedom < IDENTIFIED_DEGREES
+
+    @property
+    def implied_excess_kurtosis(self) -> float:
+        """Excess kurtosis of the *innovations*, not of the returns.
+
+        ``6 / (v - 4)`` for a standardised Student-t, zero under normal
+        innovations, and infinite at or below four degrees of freedom, where the
+        fourth moment does not exist. The returns have more than this: a GARCH
+        process mixes variances, so even Gaussian innovations produce unconditional
+        excess kurtosis. Reading this as the kurtosis of the series would double
+        count that.
+        """
+        degrees = self.degrees_of_freedom
+        if degrees is None:
+            return 0.0
+        if degrees <= 4.0:
+            return math.inf
+        return 6.0 / (degrees - 4.0)
+
+    def risk(self, *, confidence: float = 0.99, last_return: float | None = None) -> Risk:
+        """One-period value at risk and expected shortfall, at the current level.
+
+        Closed form in the innovation distribution, at the conditional
+        volatility for the next period, with the fitted mean. Under Student-t
+        innovations the quantile is the standardised-t quantile, which is the
+        whole point of fitting them: the same volatility with a normal quantile
+        gives a 99% figure smaller by a factor that grows as the tail fattens.
+
+        One period only, deliberately. Over ``h`` periods the sum of the
+        innovations is not a scaled member of the same family — for the
+        Student-t it is not a Student-t at all, and even under normal
+        innovations it is a variance mixture rather than a normal. What the
+        model does give at a horizon is the *variance*, through
+        :meth:`horizon_variance`; turning that into a quantile needs the
+        distribution of the sum, not an assumption about it.
+        """
+        variance = (
+            self.variances[-1] if last_return is None else self.next_variance(last_return)
+        )
+        volatility = math.sqrt(variance)
+        degrees = self.degrees_of_freedom
+        if self.innovation is Innovation.STUDENT_T and degrees is not None:
+            return student_t_risk(
+                mean=self.mean,
+                volatility=volatility,
+                confidence=confidence,
+                degrees=degrees,
+            )
+        return normal_risk(mean=self.mean, volatility=volatility, confidence=confidence)
 
     @property
     def persistence(self) -> float:
@@ -233,8 +339,15 @@ def _negative_log_likelihood(
     beta: float,
     mean: float,
     seed: float,
+    degrees: float | None = None,
 ) -> float:
-    """Minus the Gaussian log-likelihood, which is what gets minimised.
+    """Minus the log-likelihood, which is what gets minimised.
+
+    Gaussian when ``degrees`` is ``None``, standardised Student-t otherwise. The
+    variance recursion is identical either way — that is the design: the
+    innovation enters only through the density evaluated at the standardised
+    residual, so the two fits are nested and their likelihoods are directly
+    comparable.
 
     Returns infinity rather than raising when the recursion produces a
     non-positive variance. The optimiser reads that as a wall and walks away
@@ -247,9 +360,18 @@ def _negative_log_likelihood(
         if variance <= 0.0 or not math.isfinite(variance):
             return math.inf
         residual = value - mean
-        total += _LOG_2PI + math.log(variance) + residual * residual / variance
+        if degrees is None:
+            total += 0.5 * (_LOG_2PI + math.log(variance) + residual * residual / variance)
+        else:
+            # log f(r) = log f_Z(r / sigma) - log sigma, the Jacobian of the
+            # scaling. Dropping that half-log-variance term would make every
+            # likelihood comparison between parameter values meaningless while
+            # still producing a plausible-looking surface.
+            total -= standardised_t_log_pdf(
+                residual / math.sqrt(variance), degrees
+            ) - 0.5 * math.log(variance)
         variance = omega + alpha * residual * residual + beta * variance
-    return 0.5 * total
+    return total
 
 
 def _sigmoid(x: float) -> float:
@@ -261,8 +383,8 @@ def _sigmoid(x: float) -> float:
 
 
 def _from_free(
-    free: Sequence[float], *, target: float | None
-) -> tuple[float, float, float]:
+    free: Sequence[float], *, target: float | None, innovation: Innovation = Innovation.NORMAL
+) -> tuple[float, float, float, float | None]:
     """Map unconstrained coordinates to ``(omega, alpha, beta)``.
 
     The constraints are that all three are positive and that ``alpha + beta``
@@ -280,6 +402,13 @@ def _from_free(
     ``beta`` being transformed separately, because the constraint couples them:
     ``persistence = sigmoid(free[1])`` is the whole of the binding constraint,
     and ``free[2]`` divides it between the two terms.
+
+    The degrees of freedom, when there are any, take the last coordinate and
+    are mapped into ``(MIN_DEGREES, MAX_DEGREES)`` by the same device. The cap
+    is not a constraint the model needs — it is there because the likelihood
+    above it is flat, and a simplex on a flat surface walks until it runs out of
+    iterations and then reports not having converged, which would turn a series
+    with ordinary thin tails into a failed fit.
     """
     persistence = MAX_PERSISTENCE * _sigmoid(free[1])
     weight = _sigmoid(free[2])
@@ -288,7 +417,12 @@ def _from_free(
     # Variance targeting: the long-run level is the sample variance, so omega
     # follows from the persistence rather than being searched over.
     omega = target * (1.0 - persistence) if target is not None else math.exp(free[0])
-    return omega, alpha, beta
+    degrees = (
+        MIN_DEGREES + (MAX_DEGREES - MIN_DEGREES) * _sigmoid(free[3])
+        if innovation is Innovation.STUDENT_T
+        else None
+    )
+    return omega, alpha, beta, degrees
 
 
 def _stretch(
@@ -383,8 +517,18 @@ def fit_garch(
     mean: float | None = None,
     strict: bool = True,
     max_iterations: int = 4000,
+    innovation: Innovation = Innovation.NORMAL,
 ) -> Garch:
     """Fit a GARCH(1,1) by maximum likelihood.
+
+    ``innovation`` chooses the density the standardised residuals are assumed to
+    follow. Under :attr:`Innovation.STUDENT_T` the degrees of freedom are
+    estimated alongside the variance parameters, which is a fourth coordinate in
+    the same search rather than a two-stage fit: estimating the variance
+    parameters under a normal likelihood and then fitting a tail to the
+    residuals gives parameters that are consistent but not efficient, and on a
+    fat-tailed series the normal likelihood over-weights the largest residuals
+    badly enough to pull ``alpha`` up.
 
     ``variance_targeting`` fixes the long-run variance to the sample variance
     and estimates only the two dynamic parameters. It is more robust on short
@@ -422,7 +566,7 @@ def fit_garch(
     target = sample_variance if variance_targeting else None
 
     def objective(free: Sequence[float]) -> float:
-        omega, alpha, beta = _from_free(free, target=target)
+        omega, alpha, beta, degrees = _from_free(free, target=target, innovation=innovation)
         return _negative_log_likelihood(
             values,
             omega=omega,
@@ -430,6 +574,7 @@ def fit_garch(
             beta=beta,
             mean=centre,
             seed=sample_variance,
+            degrees=degrees,
         )
 
     # Started from alpha near 0.08 and beta near 0.90, which is where daily
@@ -442,6 +587,12 @@ def fit_garch(
         math.log(persistence / (MAX_PERSISTENCE - persistence)),
         math.log(weight / (1.0 - weight)),
     ]
+    if innovation is Innovation.STUDENT_T:
+        # Started at eight degrees of freedom: fat enough that the likelihood
+        # has a gradient towards either answer, and well inside the identified
+        # region. Starting near the cap starts on the flat part.
+        share = (8.0 - MIN_DEGREES) / (MAX_DEGREES - MIN_DEGREES)
+        start.append(math.log(share / (1.0 - share)))
     best, negative, iterations, converged = _nelder_mead(
         objective, start, max_iterations=max_iterations
     )
@@ -453,7 +604,7 @@ def fit_garch(
             "from the search."
         )
 
-    omega, alpha, beta = _from_free(best, target=target)
+    omega, alpha, beta, degrees = _from_free(best, target=target, innovation=innovation)
     return Garch(
         omega=omega,
         alpha=alpha,
@@ -469,6 +620,83 @@ def fit_garch(
         iterations=iterations,
         converged=converged,
         variance_targeted=variance_targeting,
+        innovation=innovation,
+        degrees_of_freedom=degrees,
+    )
+
+
+@dataclass(frozen=True)
+class FatTail:
+    """Whether the innovations need a fat tail, by likelihood ratio."""
+
+    #: ``2 * (log L under t - log L under normal)``, non-negative up to
+    #: optimiser error because the normal is the limit of the t.
+    statistic: float
+    #: Upper tail of a chi-square with one degree of freedom at the statistic.
+    #: **Conservative**, and the reason is structural rather than numerical: the
+    #: null puts ``1/v`` at zero, which is the boundary of the parameter space,
+    #: so the asymptotic null is the mixture ``0.5 * chi2(0) + 0.5 * chi2(1)``
+    #: and this reports about twice the true probability. Measured on 200
+    #: Gaussian-innovation samples of 2,000 observations, a nominal 5% test
+    #: rejected 2.5% of the time — so a rejection here means what it says, and
+    #: a near miss is weaker evidence against a fat tail than the number looks.
+    p_value: float
+    degrees_of_freedom: float
+    identified: bool
+    normal_log_likelihood: float
+    student_t_log_likelihood: float
+
+    @property
+    def fat(self) -> bool:
+        """Rejects at 5% *and* the degrees of freedom mean something.
+
+        Both halves are needed. An unidentified estimate up against the cap
+        cannot produce a likelihood gain worth rejecting on, so in practice the
+        second condition is redundant — but a sample that manages both would be
+        reporting a fat tail with no tail index behind it, and that is exactly
+        the claim this refuses to make.
+        """
+        return self.p_value < 0.05 and self.identified
+
+
+def fat_tail_test(
+    returns: Sequence[float] | ReturnSeries,
+    *,
+    variance_targeting: bool = False,
+    mean: float | None = None,
+) -> FatTail:
+    """Fit both innovation distributions and compare them.
+
+    The models are nested — the standardised Student-t goes to the normal as the
+    degrees of freedom grow — so the likelihood ratio is the right test and no
+    information criterion is needed to choose between them.
+
+    The reason to run it rather than always fitting the t: a series whose
+    innovations really are normal has its degrees of freedom estimated anyway,
+    and the estimate lands somewhere large and arbitrary. The value at risk that
+    comes out is then slightly too wide by an amount nobody asked for. The test
+    says whether the extra parameter is doing work.
+    """
+    values = list(returns.values) if isinstance(returns, ReturnSeries) else list(returns)
+    normal = fit_garch(
+        values, variance_targeting=variance_targeting, mean=mean, innovation=Innovation.NORMAL
+    )
+    student = fit_garch(
+        values,
+        variance_targeting=variance_targeting,
+        mean=mean,
+        innovation=Innovation.STUDENT_T,
+    )
+    statistic = 2.0 * (student.log_likelihood - normal.log_likelihood)
+    degrees = student.degrees_of_freedom
+    assert degrees is not None  # a Student-t fit always carries one
+    return FatTail(
+        statistic=statistic,
+        p_value=chi_square_sf(max(statistic, 0.0), 1.0),
+        degrees_of_freedom=degrees,
+        identified=student.degrees_identified,
+        normal_log_likelihood=normal.log_likelihood,
+        student_t_log_likelihood=student.log_likelihood,
     )
 
 
@@ -488,10 +716,16 @@ def garch_forecast_series(
 
 
 __all__ = [
+    "IDENTIFIED_DEGREES",
+    "MAX_DEGREES",
     "MAX_PERSISTENCE",
+    "MIN_DEGREES",
     "MIN_OBSERVATIONS",
     "DidNotConverge",
+    "FatTail",
     "Garch",
+    "Innovation",
+    "fat_tail_test",
     "fit_garch",
     "garch_forecast_series",
     "garch_variances",

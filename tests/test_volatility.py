@@ -18,15 +18,21 @@ from itertools import pairwise
 import pytest
 
 from shortfall.backtest import validate
-from shortfall.distributions import normal_ppf
+from shortfall.distributions import normal_ppf, student_t_ppf
 from shortfall.historical import ewma_volatility
+from shortfall.parametric import normal_risk, student_t_risk
 from shortfall.series import ReturnSeries, TooShort
 from shortfall.volatility import (
+    IDENTIFIED_DEGREES,
+    MAX_DEGREES,
     MAX_PERSISTENCE,
     MIN_OBSERVATIONS,
     DidNotConverge,
     Garch,
+    Innovation,
+    _negative_log_likelihood,
     _nelder_mead,
+    fat_tail_test,
     fit_garch,
     garch_forecast_series,
     garch_variances,
@@ -511,3 +517,220 @@ def test_a_failure_to_converge_can_be_returned_instead_of_raised() -> None:
     # the end with whatever parameters the search had reached.
     assert len(relaxed.variances) == len(data)
     assert relaxed.persistence < 1.0
+
+
+# -- Student-t innovations ---------------------------------------------------
+
+
+def simulate_student_t_garch(
+    count: int,
+    degrees: float = 5.0,
+    omega: float = TRUE[0],
+    alpha: float = TRUE[1],
+    beta: float = TRUE[2],
+    *,
+    seed: int = 7,
+    burn_in: int = 500,
+) -> list[float]:
+    """A GARCH(1,1) whose innovations are a Student-t standardised to unit variance.
+
+    The draw is ``Z = normal / sqrt(chi2(v) / v)``, which is the definition of a
+    Student-t rather than an approximation of one, divided by ``sqrt(v / (v-2))``
+    to bring its variance to one. The chi-square comes from a gamma with shape
+    ``v/2`` and scale two, which the standard library has and which works for
+    fractional degrees of freedom where summing squared normals would not.
+
+    Standardising here is what makes the recovery test meaningful: ``omega``,
+    ``alpha`` and ``beta`` below are the same numbers as in the Gaussian case, so
+    a fit that comes back with different ones has found something real.
+    """
+    rng = random.Random(seed)
+    scale = math.sqrt(degrees / (degrees - 2.0))
+    variance = omega / (1.0 - alpha - beta)
+    out: list[float] = []
+    for _ in range(count + burn_in):
+        chi_square = 2.0 * rng.gammavariate(degrees / 2.0, 1.0)
+        innovation = rng.gauss(0.0, 1.0) / math.sqrt(chi_square / degrees) / scale
+        value = math.sqrt(variance) * innovation
+        out.append(value)
+        variance = omega + alpha * value * value + beta * variance
+    return out[burn_in:]
+
+
+def test_the_student_t_fit_recovers_the_degrees_of_freedom_it_was_given() -> None:
+    """Five degrees of freedom simulated, and the variance parameters with them.
+
+    The degrees of freedom are estimated jointly, so getting them right is not
+    enough on its own — if the tail absorbed part of the variance dynamics the
+    recovered ``alpha`` and ``beta`` would be wrong while ``v`` looked fine.
+    """
+    data = simulate_student_t_garch(4000, degrees=5.0, seed=17)
+    fitted = fit_garch(data, innovation=Innovation.STUDENT_T)
+    assert fitted.converged
+    assert fitted.innovation is Innovation.STUDENT_T
+    assert fitted.degrees_of_freedom == pytest.approx(5.0, rel=0.25)
+    assert fitted.degrees_identified
+    assert fitted.alpha == pytest.approx(TRUE[1], abs=0.04)
+    assert fitted.beta == pytest.approx(TRUE[2], abs=0.05)
+    assert fitted.persistence < 1.0
+
+
+def test_normal_innovations_leave_the_degrees_of_freedom_absent() -> None:
+    data = simulate_garch(600, seed=19)
+    fitted = fit_garch(data)
+    assert fitted.innovation is Innovation.NORMAL
+    assert fitted.degrees_of_freedom is None
+    assert not fitted.degrees_identified
+    assert fitted.implied_excess_kurtosis == 0.0
+
+
+def test_the_student_t_likelihood_beats_the_normal_one_on_a_fat_tailed_series() -> None:
+    """Nested models, so this is the whole content of the comparison.
+
+    The gain has to be large: two thousand observations of ``t(5)`` innovations
+    against a normal assumption is not a close call, and a gain of a nat or two
+    would mean the extra parameter was fitting noise.
+    """
+    data = simulate_student_t_garch(2000, degrees=5.0, seed=23)
+    normal = fit_garch(data)
+    student = fit_garch(data, innovation=Innovation.STUDENT_T)
+    assert student.log_likelihood > normal.log_likelihood + 20.0
+
+
+def test_the_student_t_likelihood_is_the_normal_one_in_the_limit() -> None:
+    """At the cap the two densities agree, so the two likelihoods must too.
+
+    This is the nesting written as an equality rather than asserted in prose. It
+    also pins the Jacobian term: drop the half-log-variance from the Student-t
+    branch and this diverges by a constant times the number of observations,
+    while every other test in this file still passes.
+    """
+    data = simulate_garch(300, seed=29)
+    centre = math.fsum(data) / len(data)
+    variance = math.fsum((value - centre) ** 2 for value in data) / len(data)
+    shared = {
+        "omega": TRUE[0],
+        "alpha": TRUE[1],
+        "beta": TRUE[2],
+        "mean": centre,
+        "seed": variance,
+    }
+    gaussian = _negative_log_likelihood(data, **shared)
+    nearly = _negative_log_likelihood(data, **shared, degrees=1e7)
+    assert nearly == pytest.approx(gaussian, rel=1e-5)
+
+
+def test_a_fat_tail_is_not_inferred_from_a_series_that_has_none() -> None:
+    """Gaussian innovations: the estimate goes to the cap and says so.
+
+    The assertion is on :attr:`Garch.degrees_identified` rather than on the
+    number, because the number up there is meaningless by construction — the
+    likelihood is flat above :data:`IDENTIFIED_DEGREES`, so which side of 400 the
+    optimiser stops on is noise. A caller who reports it as a tail index is
+    making a claim the data does not support, which is what the flag exists to
+    prevent.
+    """
+    fitted = fit_garch(simulate_garch(2000, seed=31), innovation=Innovation.STUDENT_T)
+    assert fitted.degrees_of_freedom is not None
+    assert fitted.degrees_of_freedom > IDENTIFIED_DEGREES
+    assert not fitted.degrees_identified
+    assert fitted.degrees_of_freedom <= MAX_DEGREES
+
+
+@pytest.mark.parametrize(
+    ("degrees", "expected"),
+    [(5.0, 6.0), (6.0, 3.0), (10.0, 1.0), (16.0, 0.5)],
+)
+def test_the_implied_excess_kurtosis_is_six_over_v_minus_four(
+    degrees: float, expected: float
+) -> None:
+    assert _fitted_with(degrees).implied_excess_kurtosis == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("degrees", [2.5, 3.0, 4.0])
+def test_the_implied_excess_kurtosis_is_infinite_without_a_fourth_moment(
+    degrees: float,
+) -> None:
+    """At or below four degrees of freedom there is no fourth moment at all.
+
+    Returning ``inf`` rather than the formula's negative number matters: at three
+    degrees of freedom ``6 / (v - 4)`` is -6, and a caller comparing that against
+    a sample kurtosis would conclude the innovations were thin-tailed.
+    """
+    assert _fitted_with(degrees).implied_excess_kurtosis == math.inf
+
+
+def _fitted_with(degrees: float) -> Garch:
+    """A Garch record with given degrees of freedom and nothing else of interest."""
+    return Garch(
+        omega=1e-6,
+        alpha=0.05,
+        beta=0.90,
+        mean=0.0,
+        variances=(1e-4, 1e-4),
+        log_likelihood=0.0,
+        observations=2,
+        iterations=1,
+        converged=True,
+        variance_targeted=False,
+        innovation=Innovation.STUDENT_T,
+        degrees_of_freedom=degrees,
+    )
+
+
+# -- risk from the fitted model ----------------------------------------------
+
+
+def test_the_conditional_risk_is_the_closed_form_at_the_current_volatility() -> None:
+    """Delegation checked against the standalone function, not reimplemented."""
+    fitted = _fitted_with(6.0)
+    volatility = math.sqrt(fitted.variances[-1])
+    assert fitted.risk(confidence=0.99) == student_t_risk(
+        mean=0.0, volatility=volatility, confidence=0.99, degrees=6.0
+    )
+    gaussian = fit_garch(simulate_garch(400, seed=37))
+    assert gaussian.risk(confidence=0.975) == normal_risk(
+        mean=gaussian.mean,
+        volatility=math.sqrt(gaussian.variances[-1]),
+        confidence=0.975,
+    )
+
+
+def test_a_fat_tail_widens_the_quantile_at_the_same_volatility() -> None:
+    """The point of the whole exercise, in one comparison.
+
+    Same volatility, same mean, same confidence: only the innovation differs.
+    Measured at five degrees of freedom, the 99% value at risk is 12.0% larger
+    and the expected shortfall 29.4% larger. The second gap is the bigger one
+    because expected shortfall averages over the whole tail, including the part
+    beyond the quantile where the two densities differ by far the most — so a
+    normal assumption understates the average loss in a bad tail by more than it
+    understates the threshold, and the difference grows as the level rises: at
+    99.5% the same two numbers are 21.3% and 40.6%.
+
+    That ordering is the practical content. A desk that checks its value at risk
+    against breach counts and never looks at the expected shortfall has been
+    measuring the smaller of the two errors.
+    """
+    thin = _fitted_with(5.0)
+    volatility = math.sqrt(thin.variances[-1])
+    fat = thin.risk(confidence=0.99)
+    flat = normal_risk(mean=0.0, volatility=volatility, confidence=0.99)
+    assert fat.value_at_risk / flat.value_at_risk == pytest.approx(1.120, abs=0.002)
+    assert fat.expected_shortfall / flat.expected_shortfall == pytest.approx(1.294, abs=0.002)
+
+    deeper = thin.risk(confidence=0.995)
+    deeper_flat = normal_risk(mean=0.0, volatility=volatility, confidence=0.995)
+    assert deeper.value_at_risk / deeper_flat.value_at_risk == pytest.approx(1.213, abs=0.002)
+    assert deeper.expected_shortfall / deeper_flat.expected_shortfall == pytest.approx(
+        1.406, abs=0.002
+    )
+
+
+def test_the_conditional_risk_moves_with_the_return_that_just_arrived() -> None:
+    """Passing the latest return advances the recursion one step first."""
+    fitted = fit_garch(simulate_garch(500, seed=41), innovation=Innovation.STUDENT_T)
+    quiet = fitted.risk(confidence=0.99, last_return=0.0)
+    shock = fitted.risk(confidence=0.99, last_return=0.10)
+    assert shock.value_at_risk > quiet.value_at_risk
+    assert quiet.volatility == pytest.approx(math.sqrt(fitted.next_variance(0.0)))
