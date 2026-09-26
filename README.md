@@ -122,6 +122,7 @@ shortfall factors       returns.csv --factors factors.csv
 shortfall validate      forecasts.csv --es-column es --replications 2000
 shortfall volatility    returns.csv --horizon 250 --column fund
 shortfall volatility    returns.csv --innovation student-t --confidence 0.995
+shortfall volatility    returns.csv --paths 40000 --horizon 10 --draw bootstrap
 shortfall --json risk   returns.csv          # for anything downstream
 ```
 
@@ -345,6 +346,62 @@ freedom the 99% value at risk is 12.0% above the normal figure and the expected
 shortfall 29.4% above; at 99.5% they are 21.3% and 40.6%. A desk that checks its
 value at risk against breach counts and never looks at the expected shortfall has
 been measuring the smaller of the two errors.
+
+### A horizon is simulated, not scaled
+
+`Garch.risk` covers one period and refuses more, because over `h` periods the sum
+of the innovations is not a member of the family they came from — for the
+Student-t it is not a Student-t at all, and even under normal innovations it is a
+variance mixture rather than a normal. What the model gives at a horizon is the
+*variance*; turning that into a quantile needs the distribution of the sum.
+
+```python
+from shortfall import Innovations, fit_garch, horizon_risk
+
+fitted = fit_garch(returns)
+ten_day = horizon_risk(fitted, returns, steps=10, paths=40_000)
+ten_day.value_at_risk            # with ten_day.standard_error beside it
+ten_day.quantile_against_square_root_of_time
+horizon_risk(fitted, returns, steps=10, innovations=Innovations.PARAMETRIC)
+```
+
+Running the recursion forward gets three things the analytic route cannot. The
+**variance path is stochastic** rather than its own expectation, so a large draw
+early raises the variance for every remaining step. **Mean reversion** is in it,
+because it is in the recursion. And the **shape** of the innovations can be the
+empirical one: resampling the model's own standardised residuals assumes no tail
+shape at all, which is filtered historical simulation with a filter that
+forecasts — the EWMA one in `historical.py` has no long-run level and so no
+forecast.
+
+**The two square-root-of-time comparisons disagree, and the sign is not a
+constant.** That is the whole argument for simulating. Over five samples at ten
+steps and 30,000 paths:
+
+| innovations | quantile ÷ scaled one-step quantile |
+|---|---|
+| normal | **1.083** |
+| fitted `t`, ~4.5 degrees of freedom | **0.966** |
+
+Two effects pull against each other. The stochastic variance path makes the total
+leptokurtic even when each innovation is normal, pushing the ratio above one — the
+ratio of value at risk to volatility goes from 2.334 at one step, the normal's
+2.326 as it must, to 2.480 at ten. And aggregation pulls the total towards
+normality while the one-step quantile keeps the whole of the innovation's own
+tail, pushing it below one. No fixed multiplier applied to a scaled volatility
+gets both cases.
+
+The same effect makes the innovation shape matter much less over a horizon than
+over a day: resampling the residuals instead of drawing normals raises the
+expected shortfall by 22% at one step and by 7% at ten.
+
+**The answer is an estimate and says so.** Every result carries a Monte Carlo
+standard error, from the spread across twenty batches, with no density at the
+quantile to estimate. Read it as a lower bound: over 30 independent runs at ten
+steps it came to 0.89 of the observed spread at 20,000 paths — inside the 13%
+precision of a 30-run standard deviation — and to 0.73 at 2,000 paths, where a
+batch of a hundred paths is estimating a 99% quantile from its own single worst
+path.
 
 **Square-root-of-time is not a rounding correction.** Starting at four times
 the long-run variance with a persistence of 0.975, a one-year horizon
