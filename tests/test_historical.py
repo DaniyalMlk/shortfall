@@ -35,6 +35,7 @@ from shortfall.historical import (
 )
 from shortfall.parametric import Distribution, normal_risk
 from shortfall.series import Convention, ReturnSeries, TooShort
+from shortfall.volatility import fit_garch
 
 SMALL = [1.0, 2.0, 3.0, 4.0, 5.0]
 
@@ -572,3 +573,144 @@ def test_a_historical_estimate_can_be_expressed_as_a_risk() -> None:
     # them: it did not assume a shape, which is the entire point.
     assert expressed.mean == 0.0
     assert expressed.volatility == 0.0
+
+
+# -- a filter the caller supplies --------------------------------------------
+
+
+def garch_series(count: int = 1200, *, seed: int = 31) -> list[float]:
+    rng = random.Random(seed)
+    omega, alpha, beta = 2e-6, 0.08, 0.90
+    variance = omega / (1.0 - alpha - beta)
+    out: list[float] = []
+    for _ in range(count + 400):
+        value = math.sqrt(variance) * rng.gauss(0.0, 1.0)
+        out.append(value)
+        variance = omega + alpha * value * value + beta * variance
+    return out[400:]
+
+
+def regime_series(count: int, seed: int) -> list[float]:
+    rng = random.Random(seed)
+    out: list[float] = []
+    turbulent = False
+    for _ in range(count):
+        turbulent = rng.random() < (0.90 if turbulent else 0.02)
+        out.append(rng.gauss(0.0, 0.030 if turbulent else 0.006))
+    return out
+
+
+def test_a_supplied_filter_replaces_the_exponential_weighting() -> None:
+    values = garch_series(600)
+    fitted = fit_garch(values)
+    supplied = filtered_historical_risk(
+        values, confidence=0.99, volatilities=list(fitted.volatilities)
+    )
+    default = filtered_historical_risk(values, confidence=0.99)
+    assert supplied.current_volatility == pytest.approx(fitted.volatilities[-1])
+    assert supplied.risk.value_at_risk != pytest.approx(default.risk.value_at_risk, rel=1e-6)
+    assert len(supplied.standardised) == len(values)
+
+
+def test_a_constant_supplied_filter_still_reduces_to_the_identity() -> None:
+    """The invariant the whole construction rests on, under the new argument.
+
+    Dividing by a constant and multiplying by the same constant has to cancel
+    exactly, whatever the constant is and wherever it came from. This is the check
+    that would catch the supplied filter being applied in different units from the
+    level it is rescaled to.
+    """
+    values = [0.013 if index % 2 == 0 else -0.013 for index in range(200)]
+    for level in (0.001, 1.0, 55.0):
+        filtered = filtered_historical_risk(
+            values, confidence=0.95, volatilities=[level] * len(values)
+        )
+        plain = historical_risk(values, confidence=0.95)
+        assert filtered.risk.value_at_risk == pytest.approx(plain.value_at_risk, rel=1e-12)
+        assert filtered.scaling == pytest.approx(1.0, abs=1e-14)
+
+
+def test_the_current_level_can_be_a_forecast_rather_than_the_filter_s_last_value() -> None:
+    """Which is the whole reason to pass a model's filter in.
+
+    An exponentially weighted estimate has no forecast, so its last value is all
+    there is. A fitted model does, and the default rescales to the volatility of
+    the day that has just finished rather than of the day the position is exposed
+    to.
+    """
+    values = garch_series(600)
+    fitted = fit_garch(values)
+    ahead = math.sqrt(fitted.next_variance(values[-1]))
+    to_forecast = filtered_historical_risk(
+        values, confidence=0.99, volatilities=list(fitted.volatilities), current=ahead
+    )
+    to_last = filtered_historical_risk(
+        values, confidence=0.99, volatilities=list(fitted.volatilities)
+    )
+    assert to_forecast.current_volatility == pytest.approx(ahead)
+    ratio = to_forecast.risk.value_at_risk / to_last.risk.value_at_risk
+    assert ratio == pytest.approx(ahead / fitted.volatilities[-1], rel=1e-9)
+
+
+@pytest.mark.parametrize("length", [10, 601])
+def test_a_filter_of_the_wrong_length_is_refused(length: int) -> None:
+    values = garch_series(600)
+    with pytest.raises(ValueError, match="filter is one value per return"):
+        filtered_historical_risk(values, volatilities=[0.01] * length)
+
+
+@pytest.mark.parametrize("bad", [-0.01, float("nan"), float("inf")])
+def test_a_filter_value_that_is_not_a_volatility_is_refused(bad: float) -> None:
+    values = garch_series(200)
+    filter_values = [0.01] * len(values)
+    filter_values[5] = bad
+    with pytest.raises(ValueError, match="finite and"):
+        filtered_historical_risk(values, volatilities=filter_values)
+
+
+def test_filtering_by_either_beats_not_filtering_at_all() -> None:
+    """The comparison measured, and it does not say what it was expected to.
+
+    Six regime-switching series, a 500-observation window, and 4,200 one-step 99%
+    forecasts scored walk-forward. Plain historical simulation breached 1.29% of
+    the time, filtering by an exponential weighting 1.05%, and filtering by a
+    fitted GARCH 0.76%, against a nominal 1%.
+
+    So filtering beats not filtering, and between the two filters the *exponential
+    weighting lands closest to nominal* while the model is conservative. That is
+    not the result this argument is usually made with, and the reasons to prefer
+    the model filter are the ones it has anyway: a decay estimated rather than
+    assumed, a long-run level to revert to, and a forecast at horizons past one
+    step, which an exponential weighting cannot give at all.
+
+    The independence test rejected none of the eighteen runs, which is not evidence
+    that nothing clustered: 700 observations at 99% is seven breaches, and the test
+    has nothing to work with at that count.
+    """
+    window = 500
+    counts = {"plain": 0, "ewma": 0, "garch": 0}
+    total = 0
+    for seed in range(40, 46):
+        values = regime_series(1200, seed)
+        fitted = fit_garch(values)
+        model = list(fitted.volatilities)
+        weighted = ewma_volatility(values, decay=0.94)
+        for index in range(window, len(values)):
+            realised = values[index]
+            plain = historical_risk(values[:index], confidence=0.99).value_at_risk
+            counts["plain"] += realised < -plain
+            for name, filter_values in (("ewma", weighted), ("garch", model)):
+                estimate = filtered_historical_risk(
+                    values[:index],
+                    confidence=0.99,
+                    volatilities=filter_values[:index],
+                    current=filter_values[index],
+                ).risk.value_at_risk
+                counts[name] += realised < -estimate
+            total += 1
+    assert total == 4200
+    rates = {name: count / total for name, count in counts.items()}
+    assert rates["plain"] > rates["ewma"] > rates["garch"]
+    assert 0.011 < rates["plain"] < 0.015
+    assert 0.009 < rates["ewma"] < 0.012
+    assert 0.006 < rates["garch"] < 0.009

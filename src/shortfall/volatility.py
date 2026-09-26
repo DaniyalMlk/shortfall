@@ -239,7 +239,21 @@ class Garch:
         )
 
     def next_variance(self, last_return: float) -> float:
-        """The one-step-ahead forecast, given the return that just arrived."""
+        """The variance forecast for the period after the fitted sample ends.
+
+        ``omega + alpha * residual^2 + beta * variances[-1]``, and the
+        ``variances[-1]`` is the part worth reading twice: it is the *last*
+        conditional variance of the series this model was fitted on, not the one
+        before ``last_return``. So this is the forecast for the day after the
+        sample, and calling it with some earlier day's return in a walk-forward
+        loop mixes that day's surprise with the end of the sample's level.
+
+        It produces a plausible number when misused. In a walk-forward
+        measurement here the mistake moved a breach rate from 0.76% to 1.74%
+        against a nominal 1% and looked like a finding about the model. To step
+        through the sample, index :attr:`volatilities` instead — element ``t`` is
+        already the forecast made from returns strictly before ``t``.
+        """
         residual = last_return - self.mean
         return self.omega + self.alpha * residual * residual + self.beta * self.variances[-1]
 
