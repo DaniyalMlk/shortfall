@@ -18,7 +18,7 @@ from itertools import pairwise
 import pytest
 
 from shortfall.backtest import validate
-from shortfall.distributions import normal_ppf, student_t_ppf
+from shortfall.distributions import normal_ppf
 from shortfall.historical import ewma_volatility
 from shortfall.parametric import normal_risk, student_t_risk
 from shortfall.series import ReturnSeries, TooShort
@@ -32,7 +32,6 @@ from shortfall.volatility import (
     Innovation,
     _negative_log_likelihood,
     _nelder_mead,
-    fat_tail_test,
     fit_garch,
     garch_forecast_series,
     garch_variances,
