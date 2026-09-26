@@ -40,7 +40,7 @@ from .factors import attribute_risk, fit_factor_model
 from .historical import historical_risk
 from .parametric import Distribution, portfolio_risk
 from .series import Panel
-from .volatility import fit_garch
+from .volatility import Innovation, fat_tail_test, fit_garch
 
 
 class InputError(ValueError):
@@ -697,9 +697,26 @@ def command_volatility(arguments: argparse.Namespace, stream: TextIO) -> dict[st
         values = list(panel.portfolio(weights).values)
         label = "portfolio"
 
+    choice = str(arguments.innovation)
+    verdict = None
+    if choice == "auto":
+        # The whole reason to test rather than always fit the fatter tail: a
+        # series with thin innovations gets its degrees of freedom estimated
+        # anyway, lands somewhere arbitrary and large, and the quantile that
+        # comes out is very slightly too wide for no reason anybody asked for.
+        verdict = fat_tail_test(values, variance_targeting=arguments.variance_targeting)
+        innovation = Innovation.STUDENT_T if verdict.fat else Innovation.NORMAL
+    else:
+        innovation = Innovation(choice)
+
     fitted = fit_garch(
-        values, variance_targeting=arguments.variance_targeting, strict=False
+        values,
+        variance_targeting=arguments.variance_targeting,
+        strict=False,
+        innovation=innovation,
     )
+    conditional = fitted.risk(confidence=arguments.confidence, last_return=values[-1])
+    kurtosis = fitted.implied_excess_kurtosis
     horizon = int(arguments.horizon)
     payload: dict[str, Any] = {
         "series": label,
@@ -723,7 +740,29 @@ def command_volatility(arguments: argparse.Namespace, stream: TextIO) -> dict[st
         "squareRootOfTimeRatio": fitted.scaling_against_square_root_of_time(
             horizon, last_return=values[-1]
         ),
+        "innovation": fitted.innovation.value,
+        "degreesOfFreedom": fitted.degrees_of_freedom if fitted.degrees_identified else None,
+        # None rather than the number when the fourth moment does not exist.
+        # `6 / (v - 4)` is genuinely infinite at four degrees of freedom or
+        # below, and a fit landing there is not exotic — it happens on any
+        # series fat enough to be worth this model. `json.dumps` writes bare
+        # `Infinity` for it, which is not JSON, and a strict parser rejects the
+        # whole document rather than that one field.
+        "impliedExcessKurtosis": (
+            kurtosis if fitted.degrees_identified and math.isfinite(kurtosis) else None
+        ),
+        "confidence": arguments.confidence,
+        "valueAtRisk": conditional.value_at_risk,
+        "expectedShortfall": conditional.expected_shortfall,
     }
+    if verdict is not None:
+        payload["fatTail"] = {
+            "statistic": verdict.statistic,
+            "pValue": verdict.p_value,
+            "degreesOfFreedom": verdict.degrees_of_freedom if verdict.identified else None,
+            "identified": verdict.identified,
+            "fat": verdict.fat,
+        }
     if arguments.json:
         return payload
 
@@ -744,6 +783,15 @@ def command_volatility(arguments: argparse.Namespace, stream: TextIO) -> dict[st
         ["against square-root-of-time", f"{ratio:.4f}"],
         ["log likelihood", f"{fitted.log_likelihood:.2f}"],
         ["converged", "yes" if fitted.converged else "NO"],
+        ["innovation", fitted.innovation.value],
+        [
+            "degrees of freedom",
+            f"{fitted.degrees_of_freedom:.2f}"
+            if fitted.degrees_identified
+            else "not identified",
+        ],
+        [f"value at risk ({arguments.confidence:.1%})", percent(conditional.value_at_risk)],
+        ["expected shortfall", percent(conditional.expected_shortfall)],
     ]
     table(rows, stream)
     direction = "overstates" if ratio < 1.0 else "understates"
@@ -754,6 +802,26 @@ def command_volatility(arguments: argparse.Namespace, stream: TextIO) -> dict[st
         "weighted estimate has no long-run level to revert to.",
         file=stream,
     )
+    if verdict is not None:
+        if verdict.fat:
+            print(
+                f"\nThe innovations are fat-tailed: the likelihood ratio against "
+                f"normal innovations is {verdict.statistic:.1f} on one degree of "
+                f"freedom (p = {verdict.p_value:.2g}), at "
+                f"{verdict.degrees_of_freedom:.1f} degrees of freedom. The figures "
+                "above use that tail. Read against a normal quantile the same "
+                "volatility would have given a smaller number.",
+                file=stream,
+            )
+        else:
+            print(
+                f"\nNo fat tail was found in the innovations (likelihood ratio "
+                f"{verdict.statistic:.2f}, p = {verdict.p_value:.2g}), so the "
+                "figures above assume normal ones. The p-value is conservative: "
+                "the null sits on the boundary of the parameter space, which makes "
+                "it about twice the true probability.",
+                file=stream,
+            )
     if not fitted.converged:
         print(
             "\nThe optimiser did not converge. The parameters above are the best "
@@ -857,6 +925,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     moving.add_argument(
         "--horizon", type=int, default=10, help="periods ahead to aggregate. Defaults to 10."
+    )
+    moving.add_argument(
+        "--innovation",
+        choices=["auto", "normal", "student-t"],
+        default="auto",
+        help="the shape assumed for the standardised residuals. 'auto' tests "
+        "whether a fat tail is there by likelihood ratio and uses one only if it "
+        "is. Defaults to auto.",
+    )
+    moving.add_argument(
+        "--confidence",
+        type=float,
+        default=0.99,
+        help="confidence for the conditional value at risk and expected "
+        "shortfall. Defaults to 0.99.",
     )
     moving.add_argument(
         "--variance-targeting",

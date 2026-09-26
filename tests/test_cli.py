@@ -593,3 +593,118 @@ def test_volatility_names_the_columns_when_asked_for_one_that_is_missing(
 def test_volatility_refuses_a_sample_too_short_to_fit(tmp_path: Path) -> None:
     path = garch_file(tmp_path / "v.csv", periods=40)
     assert main(["volatility", str(path)], stream=io.StringIO()) == 2
+
+
+def fat_garch_file(
+    path: Path, *, periods: int = 1200, seed: int = 8, degrees: float = 4.5
+) -> Path:
+    """A GARCH path whose innovations are a standardised Student-t.
+
+    The same variance parameters as :func:`garch_file`, so the two files differ
+    only in the shape of the innovations. That is what makes the pair of tests
+    below a comparison rather than two anecdotes.
+    """
+    rng = random.Random(seed)
+    scale = math.sqrt(degrees / (degrees - 2.0))
+    variance = 2e-6
+    lines = ["date,fund"]
+    for index in range(periods):
+        chi_square = 2.0 * rng.gammavariate(degrees / 2.0, 1.0)
+        innovation = rng.gauss(0.0, 1.0) / math.sqrt(chi_square / degrees) / scale
+        value = math.sqrt(variance) * innovation
+        variance = 2e-6 + 0.09 * value * value + 0.89 * variance
+        lines.append(f"d{index},{value:.8f}")
+    return write(path, "\n".join(lines) + "\n")
+
+
+def test_volatility_finds_the_fat_tail_and_widens_the_forecast(tmp_path: Path) -> None:
+    """The default path: test for a fat tail, and use one when it is there."""
+    stream = io.StringIO()
+    assert main(
+        ["--json", "volatility", str(fat_garch_file(tmp_path / "f.csv"))], stream=stream
+    ) == 0
+    payload = json.loads(stream.getvalue())
+    assert payload["innovation"] == "student-t"
+    assert payload["fatTail"]["fat"] is True
+    assert payload["fatTail"]["pValue"] < 0.01
+    assert 2.0 < payload["degreesOfFreedom"] < 10.0
+    assert payload["expectedShortfall"] > payload["valueAtRisk"] > 0.0
+
+
+def test_volatility_leaves_a_thin_tailed_series_alone(tmp_path: Path) -> None:
+    """Gaussian innovations: reported as not identified rather than as a number."""
+    stream = io.StringIO()
+    assert main(
+        ["--json", "volatility", str(garch_file(tmp_path / "v.csv"))], stream=stream
+    ) == 0
+    payload = json.loads(stream.getvalue())
+    assert payload["innovation"] == "normal"
+    assert payload["fatTail"]["fat"] is False
+    assert payload["degreesOfFreedom"] is None
+    assert payload["impliedExcessKurtosis"] is None
+
+
+def test_the_chosen_innovation_changes_the_reported_risk(tmp_path: Path) -> None:
+    """Same data, same volatility, two quantiles — and the gap is the point."""
+    path = fat_garch_file(tmp_path / "f.csv")
+    figures = {}
+    for innovation in ("normal", "student-t"):
+        stream = io.StringIO()
+        assert main(
+            ["--json", "volatility", str(path), "--innovation", innovation], stream=stream
+        ) == 0
+        payload = json.loads(stream.getvalue())
+        assert payload["innovation"] == innovation
+        assert "fatTail" not in payload, "the test is skipped when the shape is given"
+        figures[innovation] = payload
+    assert figures["student-t"]["valueAtRisk"] > figures["normal"]["valueAtRisk"]
+    assert (
+        figures["student-t"]["expectedShortfall"] > figures["normal"]["expectedShortfall"]
+    )
+    # The expected shortfall gap is the larger one, at the same fitted level.
+    var_ratio = figures["student-t"]["valueAtRisk"] / figures["normal"]["valueAtRisk"]
+    es_ratio = (
+        figures["student-t"]["expectedShortfall"] / figures["normal"]["expectedShortfall"]
+    )
+    assert es_ratio > var_ratio > 1.0
+
+
+def test_the_volatility_payload_is_strict_json_on_a_very_fat_tail(tmp_path: Path) -> None:
+    """The implied excess kurtosis is infinite below four degrees of freedom.
+
+    ``json.dumps`` writes bare ``Infinity`` for it, which is not JSON and which a
+    strict parser rejects for the whole document rather than for the one field.
+    The round trip through ``json.loads`` would not catch it, since that accepts
+    the token — so the assertion has to be on dumping with ``allow_nan`` off.
+    """
+    stream = io.StringIO()
+    assert main(
+        [
+            "--json",
+            "volatility",
+            str(fat_garch_file(tmp_path / "f.csv", degrees=3.0, seed=13)),
+        ],
+        stream=stream,
+    ) == 0
+    payload = json.loads(stream.getvalue())
+    assert json.dumps(payload, allow_nan=False)
+    if payload["degreesOfFreedom"] is not None and payload["degreesOfFreedom"] <= 4.0:
+        assert payload["impliedExcessKurtosis"] is None
+
+
+def test_volatility_explains_a_fat_tail_in_words(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    assert main(["volatility", str(fat_garch_file(tmp_path / "f.csv"))], stream=stream) == 0
+    output = stream.getvalue()
+    assert "innovations are fat-tailed" in output
+    assert "degrees of freedom" in output
+    assert "value at risk" in output
+
+
+def test_volatility_says_so_when_it_finds_no_fat_tail(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    assert main(["volatility", str(garch_file(tmp_path / "v.csv"))], stream=stream) == 0
+    output = stream.getvalue()
+    assert "No fat tail was found" in output
+    assert "conservative" in output
+    assert "not identified" in output
