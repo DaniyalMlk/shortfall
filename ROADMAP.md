@@ -243,15 +243,25 @@ and no way to turn it into a quantile except the assumption just declined.
 
 Measured, and the headline is that the sign is not a constant.
 
-Over five samples at ten steps and 30,000 paths the horizon value at risk came to
-1.083 times the square-root-of-time figure under normal innovations and 0.966
-times it under a fitted tail near four and a half degrees of freedom. Two effects
-pull against each other: the stochastic variance path makes the accumulated
-return leptokurtic — the ratio of value at risk to volatility goes from 2.334 at
-one step, which is the normal's 2.326 as it must be, to 2.480 at ten — while
-aggregation pulls the total towards normality when the innovation itself is fat.
-The volatility comparison does not change sign between the two cases, so no
-multiplier applied to a scaled volatility reproduces either.
+Over ten samples at ten steps and 30,000 paths, the horizon value at risk against
+the square-root-of-time figure came to a mean of 1.074 under normal innovations
+(range 1.011 to 1.150, above one on all ten) and 0.986 under a fitted tail near
+four and a half degrees of freedom (range 0.930 to 1.025, above one on four of
+ten).
+
+Two effects pull against each other: the stochastic variance path makes the
+accumulated return leptokurtic — the ratio of value at risk to volatility goes
+from 2.334 at one step, which is the normal's 2.326 as it must be, to 2.480 at ten
+— while aggregation pulls the total towards normality when the innovation itself
+is fat.
+
+The counts are the sharper finding and they replace a first draft that quoted the
+fat case's mean as though the sign were reliable. It is not: under normal
+innovations the direction holds every time and under a fat tail it straddles one.
+A caller cannot choose a multiplier that is even consistently wrong, which is a
+worse position than a known bias. The volatility comparison does not change sign
+between the two cases either, so nothing applied to a scaled volatility reproduces
+either column.
 
 The same aggregation makes the innovation's shape matter much less over a horizon
 than over a day. Resampling the standardised residuals instead of drawing normals

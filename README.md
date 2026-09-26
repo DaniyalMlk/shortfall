@@ -378,18 +378,22 @@ forecast.
 constant.** That is the whole argument for simulating. Over five samples at ten
 steps and 30,000 paths:
 
-| innovations | quantile ÷ scaled one-step quantile |
-|---|---|
-| normal | **1.083** |
-| fitted `t`, ~4.5 degrees of freedom | **0.966** |
+| innovations | quantile ÷ scaled one-step quantile | above one |
+|---|---|---|
+| normal | mean **1.074**, range 1.011–1.150 | 10 of 10 |
+| fitted `t`, ~4.5 degrees of freedom | mean **0.986**, range 0.930–1.025 | 4 of 10 |
 
 Two effects pull against each other. The stochastic variance path makes the total
 leptokurtic even when each innovation is normal, pushing the ratio above one — the
 ratio of value at risk to volatility goes from 2.334 at one step, the normal's
 2.326 as it must, to 2.480 at ten. And aggregation pulls the total towards
 normality while the one-step quantile keeps the whole of the innovation's own
-tail, pushing it below one. No fixed multiplier applied to a scaled volatility
-gets both cases.
+tail, pushing it back down.
+
+Note the third column, which is the stronger version of the point. Under normal
+innovations the direction is reliable; under a fat tail it straddles one and the
+sign depends on the sample. So a caller cannot pick a multiplier that is even
+*consistently* wrong, which is a worse position to be in than a known bias.
 
 The same effect makes the innovation shape matter much less over a horizon than
 over a day: resampling the residuals instead of drawing normals raises the
