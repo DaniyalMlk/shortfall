@@ -279,3 +279,40 @@ The bootstrap floor is 250 residuals rather than the fit's own 100. A bootstrap
 cannot draw past the worst residual it holds, so at a hundred residuals a 99%
 figure sits on the boundary of the data instead of inside it. Below that the
 parametric draw is the honest route: it extrapolates, and says so.
+
+## Phase 14 — The one-step filter, and what measuring it showed
+
+Phase 13 closed the horizon half of the filtering gap and left the one-step half
+open: `filtered_historical_risk` still rescaled by an exponential weighting at an
+assumed decay, with no long-run level and no forecast to rescale *to*.
+
+- [x] The filter supplied by the caller, one value per return and aligned the same
+      way, so a fitted model's series goes straight in
+- [x] The level rescaled to stated separately, so it can be a forecast rather than
+      the filter's last value
+- [x] The identity a constant filter must satisfy kept, and tested at three
+      different constants
+- [x] The two filters scored against each other walk-forward rather than argued
+      about
+
+Measured over six regime-switching series, a 500-observation window and 4,200
+one-step 99% forecasts: no filter breached 1.29% of the time, an exponential
+weighting 1.05%, and a fitted GARCH 0.76%, against a nominal 1%.
+
+That is not the result the argument for model filtering is usually made with.
+Filtering beats not filtering, and between the two filters the exponential
+weighting lands closest to nominal while the model is conservative. The reasons to
+prefer the model are the ones it has anyway — an estimated decay, a long-run level,
+and a forecast at horizons past one step, which an exponential weighting cannot
+give at all — and the README says so rather than reporting the comparison as a win.
+
+The independence test rejected none of the eighteen runs, which is not evidence
+that nothing clustered: seven breaches per run is not enough for it to see
+anything. That is the same weakness phase 11 measured from the other direction.
+
+One trap found while measuring, now in `next_variance`'s own docstring. It uses the
+*last* conditional variance of the fitted series, so it forecasts the day after
+the sample and nothing else. Calling it with an earlier day's return in a
+walk-forward loop mixes that day's surprise with the end of the sample's level and
+returns a plausible number: it moved the breach rate from 0.76% to 1.74% and looked
+like a finding about the model rather than about the call.

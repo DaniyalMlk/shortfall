@@ -347,6 +347,50 @@ shortfall 29.4% above; at 99.5% they are 21.3% and 40.6%. A desk that checks its
 value at risk against breach counts and never looks at the expected shortfall has
 been measuring the smaller of the two errors.
 
+### Filtering, and which filter
+
+`filtered_historical_risk` divides each past return by the volatility estimated at
+the time and multiplies by a current one, keeping the empirical *shape* while the
+*scale* becomes current. The filter used to be an exponential weighting at a fixed
+decay; it can now be anything, which in practice means a fitted model:
+
+```python
+fitted = fit_garch(returns)
+filtered_historical_risk(
+    returns,
+    volatilities=fitted.volatilities,
+    current=fitted.next_variance(returns[-1]) ** 0.5,   # a forecast, not yesterday
+)
+```
+
+**Measured, and it does not say what this argument is usually made with.** Six
+regime-switching series, a 500-observation window, 4,200 one-step 99% forecasts
+scored walk-forward:
+
+| | breach rate (1% nominal) |
+|---|---|
+| no filter | 1.29% |
+| exponential weighting, decay 0.94 | **1.05%** |
+| fitted GARCH | 0.76% |
+
+Filtering beats not filtering. Between the two filters the exponential weighting
+lands closest to nominal and the model is conservative — so the reasons to prefer
+the model are the ones it has anyway: an estimated rather than assumed decay, a
+long-run level to revert to, and a forecast at horizons past one step, which an
+exponential weighting cannot give at all.
+
+The independence test rejected none of the eighteen runs, which is not evidence
+that nothing clustered: 700 observations at 99% is seven breaches, and the test has
+nothing to work with at that count.
+
+**One trap found while measuring this.** `Garch.next_variance` uses the *last*
+conditional variance of the fitted series, so it is the forecast for the day after
+the sample and nothing else. Calling it with an earlier day's return inside a
+walk-forward loop mixes that day's surprise with the end of the sample's level, and
+it produces a plausible number: it moved the breach rate above from 0.76% to 1.74%
+and looked like a finding about the model. Index `volatilities` instead — element
+`t` is already the forecast made from returns strictly before `t`.
+
 ### A horizon is simulated, not scaled
 
 `Garch.risk` covers one period and refuses more, because over `h` periods the sum
