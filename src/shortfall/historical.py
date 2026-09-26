@@ -383,8 +383,10 @@ def filtered_historical_risk(
     confidence: float = 0.99,
     decay: float = DEFAULT_DECAY,
     method: QuantileMethod = QuantileMethod.LINEAR,
+    volatilities: Sequence[float] | None = None,
+    current: float | None = None,
 ) -> Filtered:
-    """Historical simulation with each return rescaled to today's volatility.
+    """Historical simulation with each return rescaled to a current volatility.
 
     Each past return is divided by the volatility estimated at the time it
     happened and multiplied by the current estimate. The empirical *shape* —
@@ -395,24 +397,56 @@ def filtered_historical_risk(
     this reduces to plain historical simulation. That identity is the thing to
     hold on to: it says the filtering is applied and removed in the same units,
     which is the mistake that is otherwise invisible.
+
+    ``volatilities`` supplies the filter instead of :func:`ewma_volatility`, one
+    value per return and aligned the same way — element ``i`` estimated from
+    returns strictly before ``i``. A fitted
+    :class:`~shortfall.volatility.Garch`'s ``volatilities`` goes straight in, and
+    it is a better filter than the default for three reasons the volatility
+    module sets out: its decay is estimated rather than assumed, a shock decays
+    towards a long-run level, and it has a *forecast*.
+
+    ``current`` is the level the standardised returns are scaled back up to. It
+    defaults to the filter's last value, which for an exponential weighting is
+    all there is. A model that forecasts should pass its one-step-ahead figure
+    instead — the default rescales to the volatility of the day that has just
+    finished rather than of the day the position is exposed to, and on a series
+    where the two differ the gap is the point of having a model at all.
     """
     values = list(returns.values) if isinstance(returns, ReturnSeries) else list(returns)
-    volatilities = ewma_volatility(values, decay=decay)
-    current = volatilities[-1]
-    if current <= 0.0:
+    if volatilities is None:
+        filter_values = ewma_volatility(values, decay=decay)
+    else:
+        filter_values = list(volatilities)
+        if len(filter_values) != len(values):
+            raise ValueError(
+                f"{len(filter_values)} filter values against {len(values)} returns. "
+                "The filter is one value per return, aligned so that element i was "
+                "estimated from returns strictly before i; a series of a different "
+                "length would divide each return by a volatility belonging to "
+                "another date."
+            )
+        for index, value in enumerate(filter_values):
+            if value < 0.0 or not math.isfinite(value):
+                raise ValueError(
+                    f"filter value {index} is {value!r}. A volatility is finite and "
+                    "non-negative."
+                )
+    current_level = filter_values[-1] if current is None else float(current)
+    if current_level <= 0.0:
         raise ValueError(
             "the current volatility estimate is zero, so past returns cannot be "
             "rescaled to it; the series has no variation in its recent history"
         )
     standardised = [
         value / volatility if volatility > 0.0 else 0.0
-        for value, volatility in zip(values, volatilities, strict=True)
+        for value, volatility in zip(values, filter_values, strict=True)
     ]
-    rescaled = [value * current for value in standardised]
+    rescaled = [value * current_level for value in standardised]
     return Filtered(
         risk=historical_risk(rescaled, confidence=confidence, method=method),
-        current_volatility=current,
-        average_volatility=math.fsum(volatilities) / len(volatilities),
+        current_volatility=current_level,
+        average_volatility=math.fsum(filter_values) / len(filter_values),
         standardised=tuple(standardised),
     )
 
