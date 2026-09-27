@@ -169,6 +169,7 @@ def mean_excess_curve(
     losses: Sequence[float],
     *,
     points: int = 20,
+    from_fraction: float = 0.5,
     minimum_exceedances: int = MINIMUM_EXCEEDANCES,
 ) -> tuple[MeanExcess, ...]:
     """Mean excess against threshold, the standard way to choose a threshold.
@@ -193,14 +194,33 @@ def mean_excess_curve(
         raise ValueError(
             f"a mean excess needs at least two exceedances, got {minimum_exceedances!r}"
         )
+    if not 0.0 < from_fraction <= 1.0:
+        raise ValueError(
+            f"the curve starts at a fraction in (0, 1], got {from_fraction!r}"
+        )
     usable = len(ordered) - minimum_exceedances
     if usable < 1:
         raise NotEnoughTail(
             f"{len(ordered)} losses cannot leave {minimum_exceedances} above any "
             "threshold in the sample; lower `minimum_exceedances` or bring more data"
         )
-    step = usable / points
-    indices = sorted({min(usable - 1, int(index * step)) for index in range(points)})
+    # The lowest threshold is the one exceeded by ``from_fraction`` of the sample,
+    # so the default curve covers the upper half. A curve spread over the whole
+    # sample spends most of its points in the body — and on a return series it
+    # spends them on thresholds that are *gains*, where a mean excess is a number
+    # about nothing.
+    first = max(0, len(ordered) - 1 - int(from_fraction * len(ordered)))
+    span = usable - first
+    if span < 1:
+        raise NotEnoughTail(
+            f"a curve from the top {from_fraction:.0%} of {len(ordered)} losses cannot "
+            f"leave {minimum_exceedances} above its first threshold; raise "
+            "`from_fraction` or lower `minimum_exceedances`"
+        )
+    step = span / points
+    indices = sorted(
+        {first + min(span - 1, int(index * step)) for index in range(points)}
+    )
     curve: list[MeanExcess] = []
     for index in indices:
         threshold = ordered[index]

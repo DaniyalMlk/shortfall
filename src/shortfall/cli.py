@@ -36,6 +36,7 @@ from .contributions import (
 )
 from .covariance import ledoit_wolf, sample_covariance
 from .drawdown import calmar, maximum_drawdown, sortino, ulcer_index
+from .extreme import TailMethod, extreme_risk, mean_excess_curve
 from .factors import attribute_risk, fit_factor_model
 from .historical import historical_risk
 from .horizon import Innovations, horizon_risk
@@ -918,6 +919,164 @@ def command_volatility(arguments: argparse.Namespace, stream: TextIO) -> dict[st
     return payload
 
 
+def command_tail(arguments: argparse.Namespace, stream: TextIO) -> dict[str, Any]:
+    """Fit a generalised Pareto above a threshold and read the far tail off it.
+
+    The command that answers a confidence the other commands cannot. `risk`
+    fits a shape to the whole sample and `validate` scores one-step forecasts;
+    neither has anything to say at 99.9% on a few years of daily data, because
+    the answer there is two observations under one route and an extrapolation of
+    the body under the other.
+    """
+    parsed = read_table(arguments.returns)
+    panel = parsed.panel
+    names = list(panel.names)
+    if arguments.column is not None:
+        if arguments.column not in names:
+            raise InputError(
+                f"{arguments.returns} has no column named {arguments.column!r}. It has "
+                f"{', '.join(repr(name) for name in names)}."
+            )
+        values = list(panel[arguments.column].values)
+        label = arguments.column
+    elif len(names) == 1:
+        values = list(panel.column(0).values)
+        label = names[0]
+    else:
+        weights = parse_weights(arguments.weights, panel)
+        values = list(panel.portfolio(weights).values)
+        label = "portfolio"
+
+    estimate = extreme_risk(
+        values,
+        confidence=arguments.confidence,
+        tail_fraction=arguments.tail_fraction,
+        threshold=arguments.threshold,
+        method=TailMethod(arguments.method),
+    )
+    fit = estimate.fit
+    historical = historical_risk(values, confidence=arguments.confidence)
+    payload: dict[str, Any] = {
+        "series": label,
+        "observations": fit.observations,
+        "method": fit.method.value,
+        "threshold": fit.threshold,
+        "exceedances": fit.exceedances,
+        "shape": fit.shape,
+        "scale": fit.scale,
+        "shapeStandardError": fit.shape_standard_error,
+        "scaleStandardError": fit.scale_standard_error,
+        "logLikelihood": fit.log_likelihood,
+        "upperEndpoint": fit.upper_endpoint,
+        "lowestConfidence": fit.lowest_confidence,
+        "confidence": arguments.confidence,
+        "valueAtRisk": estimate.value_at_risk,
+        "expectedShortfall": estimate.expected_shortfall,
+        "observedBeyond": estimate.observed_beyond,
+        "isExtrapolated": estimate.is_extrapolated,
+        "historicalValueAtRisk": historical.value_at_risk,
+        "historicalTailObservations": historical.tail_observations,
+    }
+    if arguments.curve:
+        payload["meanExcess"] = [
+            {
+                "threshold": point.threshold,
+                "exceedances": point.exceedances,
+                "meanExcess": point.mean_excess,
+                "standardError": point.standard_error,
+            }
+            for point in mean_excess_curve(
+                [-value for value in values], points=arguments.curve
+            )
+        ]
+    if arguments.json:
+        return payload
+
+    print(f"Fitted tail — {label}\n", file=stream)
+    rows = [
+        ["parameter", "value"],
+        ["observations", str(fit.observations)],
+        ["method", fit.method.value.replace("_", " ")],
+        ["threshold (loss)", percent(fit.threshold)],
+        ["exceedances", f"{fit.exceedances} ({fit.exceedance_probability:.2%})"],
+        [
+            "shape",
+            f"{fit.shape:+.4f}"
+            + (
+                f" +/- {fit.shape_standard_error:.4f}"
+                if fit.shape_standard_error is not None
+                else ""
+            ),
+        ],
+        [
+            "scale",
+            f"{fit.scale:.6g}"
+            + (
+                f" +/- {fit.scale_standard_error:.6g}"
+                if fit.scale_standard_error is not None
+                else ""
+            ),
+        ],
+        ["log likelihood", f"{fit.log_likelihood:.2f}"],
+        [
+            "largest possible loss",
+            percent(fit.upper_endpoint) if fit.upper_endpoint is not None else "unbounded",
+        ],
+        [f"value at risk ({arguments.confidence:.3%})", percent(estimate.value_at_risk)],
+        [
+            "expected shortfall",
+            percent(estimate.expected_shortfall)
+            if estimate.expected_shortfall is not None
+            else "no finite mean",
+        ],
+        ["historical value at risk", percent(historical.value_at_risk)],
+        ["observations beyond the estimate", str(estimate.observed_beyond)],
+    ]
+    table(rows, stream)
+    if estimate.is_extrapolated:
+        print(
+            f"\nNothing in the sample is as bad as this figure, which is what the "
+            f"estimator is for and also the reason to be careful with it: "
+            f"{fit.exceedances} exceedances are deciding what happens beyond all "
+            f"{fit.observations} observations. The historical figure beside it "
+            f"cannot exceed the worst loss in the file and is reported from "
+            f"{historical.tail_observations} observation(s).",
+            file=stream,
+        )
+    if fit.upper_endpoint is not None:
+        print(
+            "\nThe fitted shape is negative, so the tail ends. A bounded loss "
+            "from market data is more often a threshold set inside the body than "
+            "a finding; raise --tail-fraction's exceedance count or set "
+            "--threshold from the mean excess curve before quoting it.",
+            file=stream,
+        )
+    if arguments.curve:
+        print("\nMean excess against threshold\n", file=stream)
+        table(
+            [["threshold", "exceedances", "mean excess", "standard error"]]
+            + [
+                [
+                    percent(point["threshold"]),
+                    str(point["exceedances"]),
+                    percent(point["meanExcess"]),
+                    percent(point["standardError"]),
+                ]
+                for point in payload["meanExcess"]
+            ],
+            stream,
+        )
+        print(
+            "\nA generalised Pareto has a mean excess that is linear in the "
+            "threshold, with slope shape/(1 - shape). So the threshold to fit "
+            "above is where the curve straightens out, and the standard errors "
+            "are there because successive points share nearly all of their data "
+            "and the curve is far smoother than its points are independent.",
+            file=stream,
+        )
+    return payload
+
+
 COMMANDS = {
     "risk": command_risk,
     "contributions": command_contributions,
@@ -926,6 +1085,7 @@ COMMANDS = {
     "factors": command_factors,
     "validate": command_validate,
     "volatility": command_volatility,
+    "tail": command_tail,
 }
 
 
@@ -1054,6 +1214,59 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="fix the long-run variance to the sample variance and estimate only "
         "the two dynamic parameters, which is more robust on a short sample",
+    )
+
+    extreme = subparsers.add_parser(
+        "tail",
+        help="fit a generalised Pareto to the exceedances and read the far tail",
+        description=(
+            "Fits the tail on its own rather than fitting the whole distribution "
+            "and asking about the tail. The figure it returns can exceed every "
+            "loss in the file, which is the point; the report says how many "
+            "observations the extrapolation rests on."
+        ),
+    )
+    common(extreme)
+    extreme.add_argument(
+        "--column", default=None, help="fit this column rather than the portfolio"
+    )
+    extreme.add_argument(
+        "--confidence",
+        type=float,
+        default=0.999,
+        help="confidence for the value at risk and expected shortfall. Defaults "
+        "to 0.999, which is where this estimator earns its keep.",
+    )
+    extreme.add_argument(
+        "--tail-fraction",
+        type=float,
+        default=0.05,
+        help="fraction of the sample to fit above. Defaults to 0.05, which is "
+        "where the applied literature starts rather than a recommendation: use "
+        "--curve and then --threshold.",
+    )
+    extreme.add_argument(
+        "--threshold",
+        type=float,
+        default=None,
+        help="fit above this loss instead, as a positive fraction. 0.02 is a 2% loss.",
+    )
+    extreme.add_argument(
+        "--method",
+        choices=[method.value for method in TailMethod],
+        default=TailMethod.MAXIMUM_LIKELIHOOD.value,
+        help="how to estimate the two parameters. Maximum likelihood is the "
+        "default and the only one with a usable standard error; the moment "
+        "estimator is steadier on a few dozen exceedances and cannot report a "
+        "shape at or above one at all.",
+    )
+    extreme.add_argument(
+        "--curve",
+        type=int,
+        default=0,
+        metavar="POINTS",
+        help="also print the mean excess curve with this many points, which is "
+        "how the threshold gets chosen rather than defaulted into",
     )
 
     checked = subparsers.add_parser(
