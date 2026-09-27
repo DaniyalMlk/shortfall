@@ -633,10 +633,11 @@ def test_the_shape_is_biased_down_on_a_student_t_and_the_note_says_so() -> None:
     """The limit result is a limit, and a Student-t approaches it slowly.
 
     A Student-t on four degrees of freedom has tail index 0.25 exactly. Fitted
-    above the worst 5% of 2,000 draws the estimate averages about 0.15 over
-    twenty samples — biased towards zero, because at that threshold the body is
-    still contributing. Raising the threshold reduces the bias and raises the
-    variance faster; ``examples/tail_comparison.py`` measures the trade.
+    above the worst 5% of 2,000 draws the estimate averages 0.18 over the twenty
+    samples below, and 0.11 above the worst 20% — biased towards zero at both,
+    and more so at the lower threshold, because there the body is still
+    contributing. ``examples/tail_comparison.py`` measures the whole trade, and
+    finds that the far quantile barely moves across it.
 
     Asserted as a direction with a generous band rather than as a number,
     because the number is a property of this generator and twenty samples.
