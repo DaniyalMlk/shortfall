@@ -133,7 +133,7 @@ def threshold_for(losses: Sequence[float], tail_fraction: float) -> float:
         raise ValueError(
             f"a tail fraction is strictly between 0 and 1, got {tail_fraction!r}"
         )
-    position = max(1, min(len(ordered), int(round(tail_fraction * len(ordered)))))
+    position = max(1, min(len(ordered), round(tail_fraction * len(ordered))))
     return ordered[position - 1]
 
 
@@ -304,7 +304,7 @@ def hill_curve(
     if points < 2:
         raise ValueError(f"a curve needs at least two points, got {points!r}")
     step = (highest - minimum) / (points - 1) if points > 1 else 0.0
-    counts = sorted({minimum + int(round(index * step)) for index in range(points)})
+    counts = sorted({minimum + round(index * step) for index in range(points)})
     return tuple(hill_shape(positive, count) for count in counts if count <= highest)
 
 
@@ -570,7 +570,7 @@ class GeneralisedPareto:
             conditional = math.exp(-excess / self.scale)
         else:
             argument = 1.0 + self.shape * excess / self.scale
-            conditional = 0.0 if argument <= 0.0 else argument ** (-1.0 / self.shape)
+            conditional = 0.0 if argument <= 0.0 else math.pow(argument, -1.0 / self.shape)
         return self.exceedance_probability * conditional
 
     def quantile(self, confidence: float) -> float:
@@ -582,7 +582,7 @@ class GeneralisedPareto:
         ratio = (1.0 - confidence) / self.exceedance_probability
         if abs(self.shape) < SHAPE_EPSILON:
             return self.threshold - self.scale * math.log(ratio)
-        return self.threshold + self.scale * (ratio ** (-self.shape) - 1.0) / self.shape
+        return self.threshold + self.scale * (math.pow(ratio, -self.shape) - 1.0) / self.shape
 
     def expected_shortfall(self, confidence: float) -> float:
         """The mean loss given a loss worse than :meth:`quantile`.

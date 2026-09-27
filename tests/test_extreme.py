@@ -62,7 +62,7 @@ def pareto_quantile(probability: float, shape: float, scale: float) -> float:
     """The generalised Pareto quantile, written out independently of the module."""
     if shape == 0.0:
         return -scale * math.log1p(-probability)
-    return scale / shape * ((1.0 - probability) ** (-shape) - 1.0)
+    return scale / shape * (math.pow(1.0 - probability, -shape) - 1.0)
 
 
 def pareto_sample(
@@ -436,7 +436,7 @@ def test_the_threshold_lands_on_an_observation_and_the_count_follows(
     rng = random.Random(23)
     losses = [rng.gauss(0.0, 0.01) for _ in range(1000)]
     threshold = threshold_for(losses, fraction)
-    position = int(round(fraction * 1000))
+    position = round(fraction * 1000)
     assert len(excesses_over(losses, threshold)) == position - 1
     assert threshold == sorted(losses, reverse=True)[position - 1]
 
@@ -491,7 +491,7 @@ def test_the_mean_excess_slope_reads_the_shape_back() -> None:
     slope = (
         math.fsum(
             (value - centre) * (excess - height)
-            for value, excess in zip(thresholds, excesses)
+            for value, excess in zip(thresholds, excesses, strict=True)
         )
         / variance
     )
@@ -537,7 +537,7 @@ def test_the_hill_estimator_agrees_with_the_fit_on_a_pareto_tail() -> None:
     # same shape and a scale of ``xi * threshold``. Both estimators are then
     # estimating the same parameter of the same correct model, with no
     # approximation left between them.
-    losses = [(1.0 - rng.random()) ** -0.35 for _ in range(4000)]
+    losses = [math.pow(1.0 - rng.random(), -0.35) for _ in range(4000)]
     fitted = fit_tail(losses, tail_fraction=0.1)
     hill = hill_shape(losses, 400)
     assert fitted.scale == pytest.approx(0.35 * fitted.threshold, rel=0.2)
@@ -667,7 +667,7 @@ def test_a_confidence_inside_the_body_is_refused_with_the_number_that_is_not() -
     confidence it does cover, because that is the number the caller needs.
     """
     fit = a_fit(shape=0.2, exceedances=100, observations=2000)
-    with pytest.raises(OutsideTheFit, match="0.95"):
+    with pytest.raises(OutsideTheFit, match=r"0\.95"):
         fit.quantile(0.9)
     with pytest.raises(OutsideTheFit):
         fit.expected_shortfall(0.5)
@@ -684,7 +684,7 @@ def test_a_shape_of_one_or_more_has_no_tail_mean_and_says_which_shape() -> None:
     expected shortfall alone and the message says the quantile survives.
     """
     fit = a_fit(shape=1.0)
-    with pytest.raises(UndefinedTailMean, match="1.0000"):
+    with pytest.raises(UndefinedTailMean, match=r"1\.0000"):
         fit.expected_shortfall(0.99)
     assert fit.quantile(0.99) > fit.threshold
     with pytest.raises(UndefinedTailMean, match="Value at risk is still defined"):
