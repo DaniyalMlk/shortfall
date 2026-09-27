@@ -316,3 +316,67 @@ the sample and nothing else. Calling it with an earlier day's return in a
 walk-forward loop mixes that day's surprise with the end of the sample's level and
 returns a plausible number: it moved the breach rate from 0.76% to 1.74% and looked
 like a finding about the model rather than about the call.
+
+## Phase 15 — The far tail, where the sample has nothing to say
+
+Historical simulation cannot return a loss larger than the worst one observed, and
+the parametric routes fit a shape to the whole sample, where the body dominates
+the likelihood. At 99.9% on a few years of daily data both answer a question about
+the tail with information about the middle.
+
+- [x] A generalised Pareto fitted to the exceedances over a threshold, by
+      Grimshaw's one-dimensional reduction of the likelihood
+- [x] The same fit by probability-weighted moments, in closed form, because the
+      two disagree where the sample is short
+- [x] Asymptotic standard errors where they exist, and absent rather than
+      misleading where they do not
+- [x] Value at risk, expected shortfall and return levels from the fit, with the
+      exponential limit forms across the removable singularity at shape zero
+- [x] Threshold diagnostics: the mean excess curve and the Hill shape as a
+      function of the order statistics it uses
+- [x] A refusal for a confidence inside the body, naming the lowest legal one
+- [x] A refusal for a shape with no finite mean, keeping the value at risk
+- [x] A refusal for a fit whose upper bound is below a loss it was fitted to
+- [x] A command line report with the historical figure printed beside it, and the
+      count of observations beyond the answer
+- [x] The comparison against the truth measured in a worked example that runs in
+      continuous integration
+
+The measurement is the part worth keeping, because it does not say what the
+argument for extreme value theory implies. On 2,000 draws of a Student-t on four
+degrees of freedom, whose tail index is exactly 0.25:
+
+At 99% the fit and historical simulation land within half a percentage point of
+each other — 4.7% against 5.2% mean absolute error — because twenty observations
+are still out there to be read off. What the fit removes as the question moves
+past the data is the bias, not the noise. At 99.99% historical simulation returns
+the worst loss in the file and is short by 21.1% on average, in the same direction
+every time; the fit averages +0.2%. Its spread is 41.6%, so the claim worth making
+is that it stops being systematically short, not that it becomes accurate.
+
+The fitted normal is short by 39.0% at 99.9% and 59.6% at 99.99%, with a spread of
+3 to 4%. Precise, consistent and wrong in one direction, which is worse than
+noisy: a varying estimator is telling you it is uncertain.
+
+The threshold trade contradicts the usual advice. Raising the threshold from the
+top fifth to the top twentieth cuts the shape's bias — 0.10 to 0.13 against a true
+0.25 — at double the spread, while the 99.9% quantile it is chosen for moves by
+under two percentage points anywhere from the top fifth to the top hundredth,
+because the fitted scale absorbs what the shape gets wrong. The default of 5% is
+defensible and not better than 20% for the number it is picked for. The top 1% is
+where it breaks: twenty exceedances give a shape whose spread is several times its
+own true value and whose mean is negative.
+
+Two implementation errors are recorded because both produced plausible output. The
+optimiser's stopping rule had an absolute term, so it was a length in the units of
+one over a loss and the dimensionless shape depended on whether returns were
+quoted as fractions or as basis points. And the search bound came from doubling
+until the profile stopped improving, which stepped past the maximum on a shape of
+0.5 and settled 0.17 of log-likelihood below what a grid search could find.
+
+One finding about a second opinion. The Hill estimator reads high on generalised
+Pareto data — 0.55 against a true 0.35 on the worst 400 of 4,000 — because it
+assumes a tail Pareto about the origin and a generalised Pareto is shifted by
+`scale / shape`, which at that threshold is 2.86 against a 90th percentile of 3.5.
+So a Hill curve disagreeing with the fit is a statement about the threshold, not
+evidence that either is broken.
