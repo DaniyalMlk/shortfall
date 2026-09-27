@@ -59,6 +59,11 @@ jobs:
         # change to the numerics cannot quietly move a number that has been in
         # print since 2016.
         run: python examples/basel_equivalence.py
+      - name: The fitted tail reproduces its published comparison
+        # Exits non-zero if the measured advantage over historical simulation and
+        # a fitted normal moves, so a change to the optimiser or the threshold
+        # rule cannot quietly rewrite a figure the README quotes.
+        run: python examples/tail_comparison.py
       - name: The command line runs over the bundled data
         run: |
           shortfall risk examples/returns.csv --weights 0.4,0.25,0.15,0.2 --shrink
@@ -68,7 +73,10 @@ jobs:
           shortfall factors examples/returns.csv --factors examples/factors.csv
           shortfall volatility examples/returns.csv --weights 0.4,0.25,0.15,0.2
           shortfall volatility examples/returns.csv --paths 5000 --horizon 10
+          shortfall tail examples/returns.csv --weights 0.4,0.25,0.15,0.2 --curve 6
+          shortfall tail examples/returns.csv --confidence 0.9999 --column equity
           shortfall --json risk examples/returns.csv > /dev/null
+          shortfall --json tail examples/returns.csv > /dev/null
 
   package:
     name: Wheel installs and runs

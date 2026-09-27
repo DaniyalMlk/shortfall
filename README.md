@@ -111,6 +111,22 @@ panel = Panel.aligned({
 })   # keeps 2026-01-02 only
 ```
 
+```python
+from shortfall import TailMethod, extreme_risk, mean_excess_curve
+
+# Risk beyond the sample: the exceedances are fitted on their own, so the answer
+# can be worse than anything that has happened. Nothing else here can do that.
+far = extreme_risk(returns, confidence=0.999, tail_fraction=0.05)
+far.value_at_risk          # a positive loss
+far.expected_shortfall     # None when the fitted shape has no finite mean
+far.observed_beyond        # how many losses were worse; often zero
+far.fit.shape              # the tail index, with a standard error beside it
+far.fit.shape_standard_error
+far.fit.upper_endpoint     # not None only if the fitted tail ends
+
+mean_excess_curve([-r for r in returns])   # where the threshold should come from
+```
+
 ## From the command line
 
 ```bash
@@ -123,6 +139,8 @@ shortfall validate      forecasts.csv --es-column es --replications 2000
 shortfall volatility    returns.csv --horizon 250 --column fund
 shortfall volatility    returns.csv --innovation student-t --confidence 0.995
 shortfall volatility    returns.csv --paths 40000 --horizon 10 --draw bootstrap
+shortfall tail          returns.csv --confidence 0.999 --curve 12
+shortfall tail          returns.csv --threshold 0.02 --method probability_weighted_moments
 shortfall --json risk   returns.csv          # for anything downstream
 ```
 
@@ -166,6 +184,86 @@ integration, so the numerics cannot quietly move a number that has been in print
 since 2016.
 
 ## Design
+
+### The far tail, fitted to the exceedances rather than to the sample
+
+Every other estimate here is told something about the whole distribution and
+asked about the tail. Historical simulation reads the tail off the order
+statistics, so at 99.9% over 2,000 returns it reports the second-worst one and
+cannot return a number larger than the worst thing that has happened. The
+parametric routes fit a shape to all of the data, where the bulk dominates the
+likelihood — and the tail is the part that was asked about.
+
+`shortfall.extreme` takes the third route. The Pickands-Balkema-de Haan result
+says the distribution of the *amount by which* a high threshold is exceeded
+converges to a generalised Pareto for a wide class of parent distributions, so a
+shape fitted to only the exceedances says nothing about the body and extrapolates
+past the largest observation. Two estimators are offered because they disagree
+where the sample is short: Grimshaw's one-dimensional reduction of the
+likelihood, and probability-weighted moments in closed form.
+
+`examples/tail_comparison.py` measures what that buys, against the truth, on a
+Student-t whose tail index is exactly the reciprocal of its degrees of freedom. It
+runs in continuous integration, and the result is not the one the argument for
+extreme value theory usually implies.
+
+| 2,000 draws of t(4) | fitted tail | historical | fitted normal |
+|---|---|---|---|
+| 99% — bias / mean abs. error | +0.1% / 4.7% | −0.5% / 5.2% | −12.1% / 13.0% |
+| 99.9% | +0.0% / 13.0% | −1.8% / 18.4% | −39.0% / 39.0% |
+| 99.99% | +0.2% / 28.4% | −21.1% / 35.7% | −59.6% / 59.6% |
+
+At 99% the fit buys almost nothing: twenty observations are still out there and
+historical simulation reads them off directly, landing within half a percentage
+point. What the fit removes further out is the **bias**, not the noise. At 99.99%
+historical simulation can only return the worst loss in the file and is short by
+a fifth, every time and in the same direction; the fit averages within a fraction
+of a per cent of the truth — with a spread of 42%, so the honest claim for it is
+that it stops being systematically short, not that it becomes accurate.
+
+The normal is the more interesting failure. Short by 39% at 99.9% and 60% at
+99.99%, with a spread of 3 to 4%: precise, consistent, and wrong in the same
+direction every single time. An estimator that varies is telling you it is
+uncertain. That one is not.
+
+The threshold is a bias-variance choice with no right answer, and the measurement
+is worth having because it contradicts the folklore. Raising the threshold from
+the top fifth to the top twentieth moves the shape from 0.10 to 0.13 against a
+true 0.25 — less biased — at more than double the spread. But the 99.9% quantile
+it is chosen *for* moves by less than two percentage points across the whole range
+from the top fifth to the top hundredth, because the fitted scale absorbs what
+the shape gets wrong. The customary 5% is not better here than 20%. What does
+break is the top 1%: at twenty exceedances the shape's spread is several times its
+own true value and its mean goes negative, which claims the loss is bounded. That
+is the regime `MINIMUM_EXCEEDANCES` refuses.
+
+Three refusals rather than plausible numbers. A confidence below the threshold's
+own exceedance probability is outside the fit, and reading the empirical quantile
+instead would be a different estimator answering under this one's name. A fitted
+shape at or above one has no finite mean, so there is no expected shortfall at any
+confidence — the value at risk still exists, so `extreme_risk` returns `None` for
+the mean rather than throwing the whole result away, while the fit itself raises
+with the shape in the message. And a fit whose upper bound falls *below* the
+largest exceedance is impossible: over 40,000 samples drawn with shapes between
+−1.2 and 0.4, the moment estimator produced one about one time in six of the fits
+it gave a negative shape, with the bound as low as 0.58 of the largest exceedance.
+Maximum likelihood cannot reach it, because the likelihood is negative infinity
+outside the support.
+
+Two smaller things that were wrong first. The optimiser's stopping rule carried an
+absolute term, which made it a length in the units of one over a loss: the same
+returns quoted as fractions and as basis points converged differently and the
+dimensionless shape moved in its eighth digit. And the search bound came from
+doubling until the profile stopped improving, which on a shape of 0.5 stepped past
+the maximum and stopped short of it, returning a fit 0.17 of log-likelihood below
+what a grid search could find. Both are tested now — the second against a
+two-dimensional sweep of the surface.
+
+The estimate is deliberately not a `Risk`. `Risk` carries `scaled_to`, which
+applies the square-root-of-time rule, and applying that to a fitted tail is
+exactly the substitution the horizon simulation exists to refuse: the sum of a
+horizon's heavy-tailed innovations is not a generalised Pareto variate with a
+scaled parameter.
 
 ### Scoring a model against what happened
 

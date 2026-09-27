@@ -788,3 +788,134 @@ def test_a_path_count_the_simulation_refuses_is_reported_not_raised(
     error = capsys.readouterr().err
     assert "paths must be between" in error
     assert "quantile of anything" in error
+
+
+# -- the fitted tail ----------------------------------------------------------
+
+
+def test_tail_prints_the_fit_the_extrapolation_and_the_comparison(
+    tmp_path: Path,
+) -> None:
+    """Three things a fitted far-tail figure is useless without.
+
+    The parameters, so the shape can be sanity-checked against the standard error
+    beside it; how many observations lie beyond the answer, which is the measure
+    of how much of it is extrapolation; and the historical figure, so the reader
+    can see the number this estimator exists to improve on.
+    """
+    code, output = run(
+        "tail", str(sample_file(tmp_path / "r.csv", periods=1200)), "--confidence", "0.999"
+    )
+    assert code == 0
+    assert "Fitted tail" in output
+    assert "maximum likelihood" in output
+    assert "shape" in output
+    assert "exceedances" in output
+    assert "historical value at risk" in output
+    assert "observations beyond the estimate" in output
+
+
+def test_tail_says_when_nothing_in_the_sample_is_that_bad(tmp_path: Path) -> None:
+    code, output = run(
+        "tail",
+        str(sample_file(tmp_path / "r.csv", periods=1200)),
+        "--confidence",
+        "0.99999",
+    )
+    assert code == 0
+    assert "Nothing in the sample is as bad as this figure" in output
+
+
+def test_tail_refuses_a_confidence_the_fit_does_not_cover(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A confidence inside the body, which the fit deliberately knows nothing about.
+
+    The message has to name the lowest confidence that is legal, because that is
+    the number the caller needs in order to fix the call.
+    """
+    stream = io.StringIO()
+    code = main(
+        ["tail", str(sample_file(tmp_path / "r.csv", periods=600)), "--confidence", "0.5"],
+        stream=stream,
+    )
+    assert code == 2
+    message = capsys.readouterr().err
+    assert "says nothing below 0.95" in message
+    assert "inside the body" in message
+
+
+def test_tail_reports_the_curve_the_threshold_should_come_from(tmp_path: Path) -> None:
+    code, output = run(
+        "tail", str(sample_file(tmp_path / "r.csv", periods=1200)), "--curve", "5"
+    )
+    assert code == 0
+    assert "Mean excess against threshold" in output
+    lines = [line for line in output.splitlines() if line.startswith(("0.", "1.", "2."))]
+    assert len(lines) >= 4
+
+
+def test_tail_takes_a_threshold_and_a_method(tmp_path: Path) -> None:
+    path = sample_file(tmp_path / "r.csv", periods=1200)
+    stream = io.StringIO()
+    code = main(
+        [
+            "--json",
+            "tail",
+            str(path),
+            "--threshold",
+            "0.008",
+            "--method",
+            "probability_weighted_moments",
+        ],
+        stream=stream,
+    )
+    assert code == 0
+    payload = json.loads(stream.getvalue())
+    assert payload["threshold"] == pytest.approx(0.008)
+    assert payload["method"] == "probability_weighted_moments"
+    # The moment estimator has no asymptotic standard error here, and the field is
+    # null rather than absent so a consumer does not have to tell the two apart.
+    assert payload["shapeStandardError"] is None
+    assert payload["shape"] < 1.0
+
+
+def test_the_tail_payload_is_json_a_strict_parser_accepts(tmp_path: Path) -> None:
+    """Every numeric field finite, including the ones that can be infinite.
+
+    ``json.dumps`` writes bare ``Infinity`` for a non-finite float, which is not
+    JSON at all — and ``json.loads`` accepts it, so a round trip does not catch
+    it. The upper endpoint is the field at risk: it does not exist for a
+    non-negative shape and is null rather than infinity.
+    """
+    stream = io.StringIO()
+    code = main(
+        ["--json", "tail", str(sample_file(tmp_path / "r.csv", periods=1200))],
+        stream=stream,
+    )
+    assert code == 0
+    payload = json.loads(stream.getvalue())
+    assert json.dumps(payload, allow_nan=False)
+    assert payload["upperEndpoint"] is None or payload["upperEndpoint"] > 0.0
+    assert payload["observations"] == 1200
+    assert 0.0 < payload["lowestConfidence"] < 1.0
+
+
+def test_tail_fits_one_named_column(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stream = io.StringIO()
+    code = main(
+        ["--json", "tail", str(sample_file(tmp_path / "r.csv", periods=900)), "--column", "beta"],
+        stream=stream,
+    )
+    assert code == 0
+    assert json.loads(stream.getvalue())["series"] == "beta"
+    assert (
+        main(
+            ["tail", str(sample_file(tmp_path / "r.csv")), "--column", "absent"],
+            stream=io.StringIO(),
+        )
+        == 2
+    )
+    assert "no column named 'absent'" in capsys.readouterr().err
