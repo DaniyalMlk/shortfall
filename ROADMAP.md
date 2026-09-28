@@ -410,11 +410,17 @@ portfolio the estimate exists for.
 
 Measured on the case it exists for: five equally weighted assets, 1,500
 observations from a t copula at 4 degrees of freedom with every pairwise tau at
-0.35, empirical marginals from the same sample, 20,000 paths, three seeds. The
-fitted copula puts 99% expected shortfall 8.6% above the Gaussian copula's on the
-identical marginals, correlation matrix and normal draws — 0.0427 against 0.0393,
-against a Monte Carlo standard error of 0.0006. Range over seeds 7.5% to 9.7%. At
-99.5% it is 10.9%. Fitted degrees of freedom 4.2, range 4.0 to 4.5.
+0.35, empirical marginals from the same sample, 20,000 paths, over three samples
+and three simulation seeds each. The fitted copula puts 99% expected shortfall
+10.6% above the Gaussian copula's on the identical marginals, correlation matrix
+and normal draws — 0.0433 against 0.0391 — with a spread of 2.6 percentage points
+across the nine runs and a range of 6.7% to 13.7%. At 99.5% it is 13.7%. Fitted
+degrees of freedom 4.2, range 4.0 to 4.5.
+
+A first attempt at this figure averaged three samples with one simulation seed
+each, which conflated sample variation with simulation variation and reported
+8.6% with a range that did not contain the properly averaged answer. The spread is
+quoted here because the point estimate on its own was misleading.
 
 The mechanism is starker in the copula alone. All five assets below their own 5%
 point: 0.42% of draws under the fitted copula against 0.14% under the Gaussian one.
@@ -424,9 +430,17 @@ one of the two limits is zero.
 
 **The negative result matters more than the positive one.** On 1,500 observations
 from a genuine Gaussian copula the same procedure fits 92 degrees of freedom and
-reports a premium of 0.1%, between −0.6% and +0.7% over three seeds, inside the
-Monte Carlo error. On `examples/returns.csv` it lands at 28.5 degrees of freedom
-with a likelihood ratio of 5.2 — weak evidence, reported as weak.
+reports a premium of 0.2% over the same nine runs, spread 0.2 percentage points,
+range −0.1% to +0.5%. On `examples/returns.csv` it lands at 28.5 degrees of
+freedom with a likelihood ratio of 5.2 — weak evidence — and the premium behaves
+accordingly: +0.4% over six simulation seeds with a spread of 1.3 percentage
+points, not distinguishable from zero.
+
+The paired draws are worth about a factor of two and not more. Sharing the normals
+halves the spread of the difference — 2.4 percentage points against 4.6 on the
+synthetic sample, 1.3 against 2.8 on the bundled one — and cannot do better,
+because the chi-square mixing draw is not shared and is the whole difference
+between the two copulas.
 
 Two things were measured because they were about to be asserted instead. One joint
 8-sigma point added to 300 independent observations moves a Pearson correlation by

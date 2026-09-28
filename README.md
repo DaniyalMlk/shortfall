@@ -303,11 +303,12 @@ each marginal separately, then puts them back together by simulation.
 
 Measured on the case it exists for — five equally weighted assets, 1,500
 observations from a t copula at 4 degrees of freedom with every pairwise tau at
-0.35, empirical marginals from the same sample, 20,000 paths, three seeds — the
-fitted copula puts 99% expected shortfall 8.6% above the Gaussian copula's on the
-identical marginals, the identical correlation matrix and the identical normal
-draws: 0.0427 against 0.0393, with a Monte Carlo standard error of 0.0006 on the
-value at risk. At 99.5% it is 10.9%, and the gap widens as the quantile falls.
+0.35, empirical marginals from the same sample, 20,000 paths, three samples and
+three simulation seeds each — the fitted copula puts 99% expected shortfall 10.6%
+above the Gaussian copula's on the identical marginals, the identical correlation
+matrix and the identical normal draws: 0.0433 against 0.0391. The spread across
+the nine runs is 2.6 percentage points, range 6.7% to 13.7%, which is the honest
+precision of it. At 99.5% it is 13.7%, and the gap widens as the quantile falls.
 
 The mechanism is starker in the copula alone. The fraction of draws with all five
 assets below their own 5% point is 0.42% under the fitted t copula against 0.14%
@@ -318,15 +319,23 @@ one quantile deeper, because one of the two limits is zero.
 **The negative result is the one that makes the positive one worth anything.** Fed
 1,500 observations from a genuine Gaussian copula, the same procedure fits 92
 degrees of freedom — at the upper bound, which is how it says "no tail dependence
-found" — and reports a premium of 0.1%, ranging from −0.6% to +0.7% over three
-seeds and inside the Monte Carlo error either way.
+found" — and reports a premium of 0.2% over the same nine runs, spread 0.2
+percentage points, range −0.1% to +0.5%.
 
 On `examples/returns.csv`, which was not built to make this point, the fit lands at
-28.5 degrees of freedom with a likelihood ratio of 5.2 against the Gaussian case —
-weak evidence, and the premium is 3.8%. The equity, credit and utilities pairs get
-tail dependence coefficients of 0.014 to 0.023; the gold pairs, correlated at
-−0.19, get zero. That is roughly what four series of 1,260 daily returns should be
-able to say, and reporting it as weak is the point.
+28.5 degrees of freedom with a likelihood ratio of 5.2 against the Gaussian case.
+That is weak evidence, and the premium behaves like it: +0.4% averaged over six
+simulation seeds with a spread of 1.3 percentage points, so it is not
+distinguishable from zero. The equity, credit and utilities pairs get tail
+dependence coefficients of 0.014 to 0.023; the gold pairs, correlated at −0.19,
+get zero. That is about what four series of 1,260 daily returns can say, and the
+estimate saying so is the point.
+
+The pairing of the two figures is worth what it is worth and no more. Sharing the
+normal draws roughly halves the spread of their difference — 2.4 percentage points
+against 4.6 over six seeds on the synthetic sample, 1.3 against 2.8 on the bundled
+one. It cannot do better, because the chi-square mixing draw is not shared and is
+the entire difference between the two copulas.
 
 ### The dependence parameter comes from the ranks, not from a correlation
 

@@ -42,14 +42,15 @@ What that buys, and what it costs:
 **Measured, on the case the module exists for.** A five-asset equally weighted
 portfolio, 1,500 observations simulated from a t copula at 4 degrees of freedom
 with every pairwise tau at 0.35, empirical marginals from that same sample,
-20,000 paths, three seeds: the fitted copula puts 99% expected shortfall 8.6% of
-itself above what the Gaussian copula gives on the identical marginals, the
-identical correlation matrix and the identical normal draws — 0.0427 against
-0.0393, against a Monte Carlo standard error of 0.0006 on the value at risk. The
-range over the three seeds was 7.5% to 9.7%. At 99.5% the gap is 10.9%, and it
-keeps widening as the quantile falls, which is the asymptotic statement showing
-up at quantiles that can still be simulated. The fitted degrees of freedom came
-to 4.2, in a range of 4.0 to 4.5.
+20,000 paths, over three samples and three simulation seeds each: the fitted
+copula puts 99% expected shortfall 10.6% of itself above what the Gaussian
+copula gives on the identical marginals, the identical correlation matrix and
+the identical normal draws — 0.0433 against 0.0391. The spread of that figure
+across the nine runs is 2.6 percentage points and its range is 6.7% to 13.7%,
+which is the honest precision of it. At 99.5% the gap is 13.7%, and it keeps
+widening as the quantile falls: the asymptotic statement showing up at quantiles
+that can still be simulated. The fitted degrees of freedom came to 4.2, in a
+range of 4.0 to 4.5.
 
 The mechanism is easier to see in the copula alone. Taking the fitted t copula
 and the Gaussian copula on the same correlation matrix, the fraction of draws
@@ -61,10 +62,10 @@ because one of the two limits is zero.
 **And on the case the module does not exist for.** Fed 1,500 observations from a
 genuine Gaussian copula, the same procedure fits 92 degrees of freedom — at or
 near the upper bound, which is how this reports "no tail dependence found" — and
-puts 99% expected shortfall 0.1% above the Gaussian figure, in a range of -0.6%
-to +0.7% over three seeds and inside the Monte Carlo error either way. The method
-does not manufacture tail dependence that is not in the data, which is the
-property that makes the 8.6% above worth anything.
+puts 99% expected shortfall 0.2% above the Gaussian figure over the same nine
+runs, with a spread of 0.2 percentage points and a range of -0.1% to +0.5%. The
+method does not manufacture tail dependence that is not in the data, which is
+the property that makes the 10.6% above worth anything.
 
 Sign convention, as everywhere else here: results are stated in losses, and a
 value at risk of 0.04 is a 4% loss.
@@ -709,9 +710,17 @@ def copula_risk(
     The Gaussian comparison in the result is computed from the *same* standard
     normal draws as the fitted copula, differing only in whether they are divided
     by the chi-square mixing variable. That makes the two figures paired rather
-    than independent, so their difference is a much cleaner read on the
-    assumption than two separate simulations would give — the shared draws cancel
-    most of the Monte Carlo error out of the comparison.
+    than independent, and their difference a cleaner read on the assumption than
+    two separate simulations would give.
+
+    How much cleaner is worth measuring rather than asserting, because the answer
+    is "about half" and not "almost all". Over six simulation seeds at 20,000
+    paths the spread of the relative difference is 2.4 percentage points paired
+    against 4.6 unpaired on a sample drawn at four degrees of freedom, and 1.3
+    against 2.8 on the bundled example series. The reason it is not better is
+    structural: the normals are shared and the chi-square mixing draw is not, and
+    it cannot be — that variable is the entire difference between the two
+    copulas, so there is nothing to share.
     """
     if len(weights) != panel.assets:
         raise Misaligned(
