@@ -25,7 +25,9 @@ from shortfall import (
 from shortfall.linalg import is_positive_semidefinite
 
 
-def _sample(seed: int, n: int, *, rho: float = 0.0, digits: int | None = None):
+def _sample(
+    seed: int, n: int, *, rho: float = 0.0, digits: int | None = None
+) -> tuple[list[float], list[float]]:
     rng = random.Random(seed)
     x = []
     y = []

@@ -127,6 +127,25 @@ far.fit.upper_endpoint     # not None only if the fitted tail ends
 mean_excess_curve([-r for r in returns])   # where the threshold should come from
 ```
 
+```python
+from shortfall import Family, Marginal, copula_risk, fit_copula, kendall_tau
+
+fitted = fit_copula(panel)                    # Student-t by default
+fitted.degrees_of_freedom                     # 4.2 on a sample drawn at 4
+fitted.likelihood_ratio                       # 510 against the Gaussian case
+for pair in fitted.tail_dependence():
+    pair.first, pair.second, pair.coefficient # 0.0 under a Gaussian copula
+
+result = copula_risk(panel, weights, confidence=0.99, paths=20_000, seed=0)
+result.expected_shortfall                     # 0.0427
+result.gaussian_expected_shortfall            # 0.0393, same marginals, same draws
+result.tail_dependence_premium                # 0.086 -- the assumption, priced
+result.standard_error                         # 0.0006, and read it as a floor
+
+copula_risk(panel, weights, marginal=Marginal.EXTREME_VALUE)   # fitted marginal tails
+kendall_tau(first, second)                    # O(T log T), not O(T^2)
+```
+
 ## From the command line
 
 ```bash
@@ -141,6 +160,8 @@ shortfall volatility    returns.csv --innovation student-t --confidence 0.995
 shortfall volatility    returns.csv --paths 40000 --horizon 10 --draw bootstrap
 shortfall tail          returns.csv --confidence 0.999 --curve 12
 shortfall tail          returns.csv --threshold 0.02 --method probability_weighted_moments
+shortfall copula        returns.csv --weights 0.4,0.25,0.15,0.2 --paths 40000
+shortfall copula        returns.csv --family gaussian --marginal extreme_value
 shortfall --json risk   returns.csv          # for anything downstream
 ```
 
@@ -264,6 +285,116 @@ applies the square-root-of-time rule, and applying that to a fitted tail is
 exactly the substitution the horizon simulation exists to refuse: the sum of a
 horizon's heavy-tailed innovations is not a generalised Pareto variate with a
 scaled parameter.
+
+### An elliptical model cannot have assets crash together
+
+Every other multi-asset route here reads a covariance matrix, and that is a
+stronger assumption than it looks. Under a multivariate normal, the probability
+that two assets are both beyond their own `q` quantile, divided by `q`, goes to
+zero as `q` falls — at *any* correlation below one. A correlation of 0.9 buys a
+great deal of co-movement in the body and asymptotically none in the tail. Under a
+multivariate Student-t the limit is positive, which is better, but it is forced to
+be the same number for every pair and the same above as below.
+
+So a portfolio that is mildly correlated day to day and moves as one in a crash
+has no representation in a covariance matrix, and that portfolio is the reason the
+estimate is being computed. `copula_risk` fits the dependence to the ranks and
+each marginal separately, then puts them back together by simulation.
+
+Measured on the case it exists for — five equally weighted assets, 1,500
+observations from a t copula at 4 degrees of freedom with every pairwise tau at
+0.35, empirical marginals from the same sample, 20,000 paths, three seeds — the
+fitted copula puts 99% expected shortfall 8.6% above the Gaussian copula's on the
+identical marginals, the identical correlation matrix and the identical normal
+draws: 0.0427 against 0.0393, with a Monte Carlo standard error of 0.0006 on the
+value at risk. At 99.5% it is 10.9%, and the gap widens as the quantile falls.
+
+The mechanism is starker in the copula alone. The fraction of draws with all five
+assets below their own 5% point is 0.42% under the fitted t copula against 0.14%
+under the Gaussian one; below their own 1% point, 0.057% against 0.005%.
+Independence would give 3.1e-7 and 1e-10. A factor of 3 becomes a factor of 11
+one quantile deeper, because one of the two limits is zero.
+
+**The negative result is the one that makes the positive one worth anything.** Fed
+1,500 observations from a genuine Gaussian copula, the same procedure fits 92
+degrees of freedom — at the upper bound, which is how it says "no tail dependence
+found" — and reports a premium of 0.1%, ranging from −0.6% to +0.7% over three
+seeds and inside the Monte Carlo error either way.
+
+On `examples/returns.csv`, which was not built to make this point, the fit lands at
+28.5 degrees of freedom with a likelihood ratio of 5.2 against the Gaussian case —
+weak evidence, and the premium is 3.8%. The equity, credit and utilities pairs get
+tail dependence coefficients of 0.014 to 0.023; the gold pairs, correlated at
+−0.19, get zero. That is roughly what four series of 1,260 daily returns should be
+able to say, and reporting it as weak is the point.
+
+### The dependence parameter comes from the ranks, not from a correlation
+
+Pearson correlation is the wrong statistic to hand a copula on two counts. It is
+not invariant to the marginals, which is exactly what a copula abstracts away:
+square one series and take logs of another and the dependence is unchanged by any
+reasonable definition, because every pair keeps its ordering, while the
+correlation moves. And it is not robust in the direction that matters — one joint
+8-sigma point added to 300 independent observations moves the sample correlation
+by 0.175 on average and Kendall's tau by 0.0066, which is the derived bound of
+`2(1 + |tau|)/(n + 1)`.
+
+Kendall's tau it is, then, and the inversion `rho = sin(pi tau / 2)` holds for
+every elliptical copula at any degrees of freedom — which is why the correlation
+matrix can be estimated without first deciding what the tail looks like. The
+inversion is not a rescaling: a tau of 0.5 is a correlation of 0.707 and a tau of
+0.1 is 0.156, so reading a rank correlation as a linear one understates dependence
+everywhere.
+
+Counting concordant pairs directly is quadratic. `kendall_tau` sorts and counts
+inversions with a Fenwick tree instead: 6.7ms against 246ms at 2,000 observations,
+and the factor grows. The quadratic definition is kept and exported, because an
+`O(T log T)` count with a tie correction is exactly the kind of code that is wrong
+in a way no property test catches, and it is checked against the definition on
+samples built to be full of ties.
+
+Applying a non-linear inversion pair by pair does not have to land on a valid
+correlation matrix, and on real data it routinely does not. The projection onto
+the nearest positive semi-definite matrix is reported rather than performed
+quietly: it moves the smallest eigenvalues most, so the pairs it changes are the
+ones in the near-degenerate combinations, which is where a simulated portfolio
+would otherwise have concentrated.
+
+### The degrees of freedom are fitted, and the search is checked
+
+That one parameter is what carries joint tail arrival, so defaulting it would be
+choosing the answer. It comes from a profile likelihood on the copula density with
+the correlation matrix held at its rank estimate — consistent, not efficient, and
+deliberately so: estimating both at once would let a misspecified tail move the
+correlations.
+
+A profile search that settles below the maximum is the failure this code is most
+likely to have and it does not announce itself, so there is a test comparing the
+search's likelihood against a quarter-step grid over the whole range. The
+quantile function is memoised inside each likelihood evaluation, which is exact
+rather than approximate: the ranks of every column are a permutation of `1..T`, so
+a panel presents `T` distinct probabilities and not `T*d`. That plus a shorter
+search took a fit on 800 observations of four assets from 40s to 6.6s.
+
+A maximum at the upper bound is returned as the bound rather than raised as a
+failure. "Not measurably heavy" is the correct answer to how heavy the joint tail
+is, often enough that it needs to be sayable.
+
+### Marginal tails are a separate switch from the dependence
+
+With empirical marginals no simulated draw for a single asset can exceed that
+asset's worst observation, so every bit of the extrapolation lives in the
+dependence. `Marginal.EXTREME_VALUE` splices a fitted generalised Pareto onto each
+loss tail and puts it back — separately, so the two assumptions can be turned on
+one at a time.
+
+The splice point has to be the fit's *realised* exceedance fraction and not the
+tail fraction it was asked for. A threshold at the 5% point of 800 losses is
+exceeded by 39 of them, not 40, so the fit describes the worst 4.875% and refuses
+anything shallower — it knows it was told nothing about the body. Splicing at the
+nominal 5% sends a thin band of probabilities to a tail that declines to answer
+for them, and because those probabilities only come up sometimes, it is a failure
+that appears on one seed in five.
 
 ### Scoring a model against what happened
 

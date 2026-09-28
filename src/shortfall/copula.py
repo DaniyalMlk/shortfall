@@ -40,18 +40,31 @@ What that buys, and what it costs:
   model and would also let a misspecified tail contaminate the correlation.
 
 **Measured, on the case the module exists for.** A five-asset equally weighted
-portfolio, 2,000 observations simulated from a t copula at 4 degrees of freedom
-with all pairwise taus at 0.35, empirical marginals from the same sample, 40,000
-paths: the fitted t copula puts 99% expected shortfall 15.9% above what the
-Gaussian copula gives on the identical marginals and the identical correlation
-matrix (0.0400 against 0.0345). The fitted degrees of freedom came to 4.3. At
-99.5% the gap is 18.4%. That difference is the assumption, priced.
+portfolio, 1,500 observations simulated from a t copula at 4 degrees of freedom
+with every pairwise tau at 0.35, empirical marginals from that same sample,
+20,000 paths, three seeds: the fitted copula puts 99% expected shortfall 8.6% of
+itself above what the Gaussian copula gives on the identical marginals, the
+identical correlation matrix and the identical normal draws — 0.0427 against
+0.0393, against a Monte Carlo standard error of 0.0006 on the value at risk. The
+range over the three seeds was 7.5% to 9.7%. At 99.5% the gap is 10.9%, and it
+keeps widening as the quantile falls, which is the asymptotic statement showing
+up at quantiles that can still be simulated. The fitted degrees of freedom came
+to 4.2, in a range of 4.0 to 4.5.
 
-**And on the case it does not.** Fed 2,000 observations from a genuine Gaussian
-copula, the same procedure fits 24.7 degrees of freedom and reports a 99%
-expected shortfall 1.4% above the Gaussian one — inside the Monte Carlo error of
-either. The method does not manufacture tail dependence that is not there,
-which is the property that makes the 15.9% above worth believing.
+The mechanism is easier to see in the copula alone. Taking the fitted t copula
+and the Gaussian copula on the same correlation matrix, the fraction of draws
+with *all five* assets below their own 5% point is 0.42% against 0.14%, a factor
+of 3; below their own 1% point it is 0.057% against 0.005%, a factor of 11.
+Independence would give 3.1e-7 and 1e-10. The factor grows as the quantile falls
+because one of the two limits is zero.
+
+**And on the case the module does not exist for.** Fed 1,500 observations from a
+genuine Gaussian copula, the same procedure fits 92 degrees of freedom — at or
+near the upper bound, which is how this reports "no tail dependence found" — and
+puts 99% expected shortfall 0.1% above the Gaussian figure, in a range of -0.6%
+to +0.7% over three seeds and inside the Monte Carlo error either way. The method
+does not manufacture tail dependence that is not in the data, which is the
+property that makes the 8.6% above worth anything.
 
 Sign convention, as everywhere else here: results are stated in losses, and a
 value at risk of 0.04 is a 4% loss.

@@ -293,10 +293,9 @@ class TestFit:
         # has to come out at least as high.
         from shortfall.copula import (
             _pseudo_observations,
-            elliptical_correlation,
-            kendall_matrix,
             student_t_copula_log_likelihood,
         )
+        from shortfall.ranks import elliptical_correlation, kendall_matrix
 
         panel = panel_for(33, observations=800, degrees=4.0)
         fitted = fit_for(panel)

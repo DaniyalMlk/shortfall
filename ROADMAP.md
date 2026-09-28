@@ -380,3 +380,75 @@ assumes a tail Pareto about the origin and a generalised Pareto is shifted by
 `scale / shape`, which at that threshold is 2.86 against a 90th percentile of 3.5.
 So a Hill curve disagreeing with the fit is a statement about the threshold, not
 evidence that either is broken.
+
+## Phase 16 — Dependence that is not elliptical
+
+Every multi-asset estimate so far read a covariance matrix. Under a normal that
+forces the probability of two assets being in their own tails together to zero at
+any correlation below one; under a multivariate t it forces one number for every
+pair, symmetric between the tails. A portfolio that is mildly correlated day to
+day and moves as one in a crash therefore had no representation here, and it is the
+portfolio the estimate exists for.
+
+- [x] Kendall's tau-b counted with a Fenwick tree rather than over pairs, with the
+      tie correction, checked against the quadratic definition on samples built to
+      be full of ties
+- [x] Spearman's rho, and both elliptical inversions, with the projection onto the
+      nearest valid correlation matrix reported rather than performed quietly
+- [x] Gaussian and Student-t copula log-likelihoods, with the marginal densities
+      dividing out
+- [x] Degrees of freedom by profile likelihood, checked against a grid over the
+      whole range, with a maximum at the upper bound returned as the bound
+- [x] The coefficient of tail dependence in closed form, cross-checked against the
+      elementary antiderivative at five degrees of freedom
+- [x] Marginals empirical or spliced with a fitted generalised Pareto tail, as a
+      separate switch from the dependence
+- [x] Simulated portfolio risk with the Gaussian-copula figure from the same normal
+      draws beside it, and a batched Monte Carlo standard error
+- [x] A `copula` command, and the whole payload asserted to survive a strict JSON
+      encoder
+
+Measured on the case it exists for: five equally weighted assets, 1,500
+observations from a t copula at 4 degrees of freedom with every pairwise tau at
+0.35, empirical marginals from the same sample, 20,000 paths, three seeds. The
+fitted copula puts 99% expected shortfall 8.6% above the Gaussian copula's on the
+identical marginals, correlation matrix and normal draws — 0.0427 against 0.0393,
+against a Monte Carlo standard error of 0.0006. Range over seeds 7.5% to 9.7%. At
+99.5% it is 10.9%. Fitted degrees of freedom 4.2, range 4.0 to 4.5.
+
+The mechanism is starker in the copula alone. All five assets below their own 5%
+point: 0.42% of draws under the fitted copula against 0.14% under the Gaussian one.
+Below their own 1% point: 0.057% against 0.005%. Independence gives 3.1e-7 and
+1e-10. A factor of three becomes a factor of eleven one quantile deeper, because
+one of the two limits is zero.
+
+**The negative result matters more than the positive one.** On 1,500 observations
+from a genuine Gaussian copula the same procedure fits 92 degrees of freedom and
+reports a premium of 0.1%, between −0.6% and +0.7% over three seeds, inside the
+Monte Carlo error. On `examples/returns.csv` it lands at 28.5 degrees of freedom
+with a likelihood ratio of 5.2 — weak evidence, reported as weak.
+
+Two things were measured because they were about to be asserted instead. One joint
+8-sigma point added to 300 independent observations moves a Pearson correlation by
+0.175 and Kendall's tau by 0.0066; the bound on the second is
+`2(1 + |tau|)/(n + 1)`, which is 0.0066 and *not* the `2/n` a first draft claimed —
+appending a point changes the denominator as well as the numerator. And the closed
+form for tail dependence at four degrees of freedom and a correlation of 0.5 is
+0.25317, not the 0.2546 written from memory; it is now checked against the
+elementary antiderivative of the t density at five degrees of freedom, which shares
+no code with the series the library evaluates.
+
+One defect, and it would have been intermittent. The generalised Pareto splice
+point has to be the fit's realised exceedance fraction, not the tail fraction asked
+for: a threshold at the 5% point of 800 losses is exceeded by 39 of them, so the
+fit describes the worst 4.875% and refuses anything shallower. Splicing at the
+nominal 5% routed a thin band of probabilities to a tail that declines to answer
+for them, which surfaced on one seed in five.
+
+The optimisation worth recording is exact rather than approximate. The quantile
+function is the expensive part of a copula likelihood, and the ranks of every
+column are a permutation of `1..T` — so a panel of `T` observations and `d` assets
+presents `T` distinct probabilities, not `T*d`. Memoising within the evaluation
+took one pass on 800 observations of four assets from 835ms to 201ms, and the whole
+fit from 40s to 6.6s, landing at a likelihood no lower than a quarter-step grid
+search over the same range.
