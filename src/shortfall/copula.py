@@ -52,6 +52,37 @@ widening as the quantile falls: the asymptotic statement showing up at quantiles
 that can still be simulated. The fitted degrees of freedom came to 4.2, in a
 range of 4.0 to 4.5.
 
+**Where it matters is the opposite of where it is expected to.** Sweeping the
+pairwise tau on the same construction, with the fitted copula against the
+Gaussian one at 99% over three simulation seeds each:
+
+=====  ===============  =======
+tau    correlation      premium
+=====  ===============  =======
+0.05   0.078            +19.7%
+0.15   0.233            +17.6%
+0.30   0.454            +12.0%
+0.50   0.707             +5.9%
+0.70   0.891             +1.5%
+0.90   0.988             -1.0%
+=====  ===============  =======
+
+The premium is *largest when the correlation is lowest* and gone by the time the
+correlation approaches one. The usual intuition — that tail dependence matters
+most for assets that are already correlated — has it backwards, and the reason is
+worth following. At a correlation near one the Gaussian copula already moves
+everything together, so the portfolio behaves like a single asset and no choice of
+copula can change that asset's own marginal tail. At a correlation near zero the
+Gaussian copula promises real diversification in the extremes, and that promise is
+exactly what is illusory: a t copula at four degrees of freedom has a tail
+dependence coefficient of 0.0756 at a correlation of *zero*, because the shared
+mixing variable is what makes large moves arrive together and it does not care
+about the correlation at all.
+
+So the portfolio this module exists for is the one that looks diversified. A book
+of assets correlated at 0.08 is the case where the covariance matrix is most
+reassuring and most wrong.
+
 The mechanism is easier to see in the copula alone. Taking the fitted t copula
 and the Gaussian copula on the same correlation matrix, the fraction of draws
 with *all five* assets below their own 5% point is 0.42% against 0.14%, a factor

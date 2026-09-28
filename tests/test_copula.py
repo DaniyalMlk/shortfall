@@ -497,6 +497,41 @@ class TestPortfolioRisk:
         json.dumps(payload, allow_nan=False)
 
 
+    def test_the_premium_falls_as_the_correlation_rises(self) -> None:
+        """The finding, at a tolerance a short test can afford.
+
+        Measured properly in the module: the premium over a Gaussian copula runs
+        +19.7% at a tau of 0.05 down to -1.0% at 0.90. The direction is the point
+        and it is the opposite of the obvious expectation, so it is pinned here —
+        loosely, because at 4,000 paths the figure has a couple of points of
+        noise in it and the two ends are what separate.
+        """
+        weak = panel_for(40, observations=700, assets=3, tau=0.05, degrees=4.0)
+        strong = panel_for(41, observations=700, assets=3, tau=0.9, degrees=4.0)
+        diversified = copula_risk(
+            weak, [1 / 3] * 3, confidence=0.99, paths=4_000, seed=11
+        )
+        concentrated = copula_risk(
+            strong, [1 / 3] * 3, confidence=0.99, paths=4_000, seed=11
+        )
+        assert (
+            diversified.tail_dependence_premium
+            > concentrated.tail_dependence_premium
+        )
+        assert diversified.tail_dependence_premium > 0.05
+
+    def test_uncorrelated_t_margins_still_arrive_together(self) -> None:
+        # The mechanism behind the sweep above: the shared mixing variable does
+        # not consult the correlation, so a t copula has tail dependence at a
+        # correlation of exactly zero while a Gaussian one has none at all. This
+        # is why the Gaussian promise of tail diversification is the one that
+        # fails.
+        assert tail_dependence_coefficient(0.0, 4.0) == pytest.approx(
+            0.07558682, abs=1e-7
+        )
+        assert tail_dependence_coefficient(0.0, None) == 0.0
+
+
 class TestRiskRefusals:
     def test_weight_count_must_match(self) -> None:
         panel = panel_for(29, observations=300)

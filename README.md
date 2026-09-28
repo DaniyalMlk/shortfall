@@ -310,6 +310,33 @@ matrix and the identical normal draws: 0.0433 against 0.0391. The spread across
 the nine runs is 2.6 percentage points, range 6.7% to 13.7%, which is the honest
 precision of it. At 99.5% it is 13.7%, and the gap widens as the quantile falls.
 
+**And it matters in the opposite place from where it is expected to.** Sweeping the
+pairwise tau on the same construction, premium at 99% over three simulation seeds
+each:
+
+| tau | correlation | premium |
+| --- | --- | --- |
+| 0.05 | 0.078 | +19.7% |
+| 0.15 | 0.233 | +17.6% |
+| 0.30 | 0.454 | +12.0% |
+| 0.50 | 0.707 | +5.9% |
+| 0.70 | 0.891 | +1.5% |
+| 0.90 | 0.988 | −1.0% |
+
+The premium is largest where the correlation is *lowest*, and gone once the
+correlation approaches one. The intuition that tail dependence matters most for
+assets that are already correlated has it backwards. At a correlation near one the
+Gaussian copula already moves everything together, so the portfolio is effectively
+one asset and no copula can change that asset's own marginal tail. At a correlation
+near zero the Gaussian copula promises genuine diversification in the extremes —
+and that promise is what is illusory, because a t copula at four degrees of freedom
+has a tail dependence coefficient of 0.0756 at a correlation of *zero*. The shared
+mixing variable is what makes large moves arrive together and it does not care
+about the correlation at all.
+
+So the portfolio this is for is the one that looks diversified. A book correlated
+at 0.08 is where a covariance matrix is most reassuring and most wrong.
+
 The mechanism is starker in the copula alone. The fraction of draws with all five
 assets below their own 5% point is 0.42% under the fitted t copula against 0.14%
 under the Gaussian one; below their own 1% point, 0.057% against 0.005%.

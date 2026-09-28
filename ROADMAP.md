@@ -422,6 +422,20 @@ each, which conflated sample variation with simulation variation and reported
 8.6% with a range that did not contain the properly averaged answer. The spread is
 quoted here because the point estimate on its own was misleading.
 
+Sweeping the pairwise tau on the same construction turned up the finding worth
+having, because it reverses the obvious expectation. Premium at 99%, three
+simulation seeds each: +19.7% at a tau of 0.05, +17.6% at 0.15, +12.0% at 0.30,
++5.9% at 0.50, +1.5% at 0.70 and −1.0% at 0.90. It is largest where the
+correlation is *lowest*.
+
+The reason: at a correlation near one the Gaussian copula already moves everything
+together, so the portfolio is one asset and no copula changes that asset's own
+marginal tail. At a correlation near zero the Gaussian copula promises real
+diversification in the extremes, and that is the promise that is false — the t
+copula's tail dependence coefficient at a correlation of zero and four degrees of
+freedom is 0.0756, because the shared mixing variable does not consult the
+correlation. The portfolio this method is for is the one that looks diversified.
+
 The mechanism is starker in the copula alone. All five assets below their own 5%
 point: 0.42% of draws under the fitted copula against 0.14% under the Gaussian one.
 Below their own 1% point: 0.057% against 0.005%. Independence gives 3.1e-7 and
