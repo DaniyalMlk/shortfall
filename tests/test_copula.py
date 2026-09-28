@@ -532,6 +532,42 @@ class TestPortfolioRisk:
         assert tail_dependence_coefficient(0.0, None) == 0.0
 
 
+    def test_value_at_risk_can_move_the_other_way_from_expected_shortfall(
+        self,
+    ) -> None:
+        """Measured: -4.0% against +6.0% at 95% on a weakly correlated book.
+
+        Tail dependence moves mass from the near tail to the far tail and the
+        total is one, so a quantile close to the body has less beyond it and
+        comes in lower while the mean of what is beyond comes in higher. A
+        reader taking the 95% value at risk alone would conclude the assumption
+        made the portfolio safer, which is the reason both figures are in the
+        result. Asserted as the gap between the two rather than as the sign of
+        the first, because at 4,000 paths the sign of a 4% move is not reliable
+        and the ordering is.
+        """
+        panel = panel_for(42, observations=900, assets=3, tau=0.05, degrees=4.0)
+        shallow = copula_risk(
+            panel, [1 / 3] * 3, confidence=0.95, paths=8_000, seed=13
+        )
+        var_change = (
+            shallow.value_at_risk / shallow.gaussian_value_at_risk - 1.0
+        )
+        assert shallow.tail_dependence_premium > var_change
+
+    def test_the_gap_between_the_two_measures_closes_further_out(self) -> None:
+        # Measured: value at risk runs -4.0% at 95% and +29.4% at 99.9% while
+        # expected shortfall runs +6.0% and +35.2%. Both rise, and the quantile
+        # catches up, because far enough out it is inside the region the mass
+        # moved to.
+        panel = panel_for(42, observations=900, assets=3, tau=0.05, degrees=4.0)
+        near = copula_risk(panel, [1 / 3] * 3, confidence=0.95, paths=8_000, seed=14)
+        far = copula_risk(panel, [1 / 3] * 3, confidence=0.995, paths=8_000, seed=14)
+        near_var = near.value_at_risk / near.gaussian_value_at_risk - 1.0
+        far_var = far.value_at_risk / far.gaussian_value_at_risk - 1.0
+        assert far_var > near_var
+
+
 class TestRiskRefusals:
     def test_weight_count_must_match(self) -> None:
         panel = panel_for(29, observations=300)

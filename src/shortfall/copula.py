@@ -83,6 +83,31 @@ So the portfolio this module exists for is the one that looks diversified. A boo
 of assets correlated at 0.08 is the case where the covariance matrix is most
 reassuring and most wrong.
 
+**And the two measures disagree about the direction.** On that same book, the
+fitted copula against the Gaussian one:
+
+==========  ===============  ==================
+confidence  value at risk    expected shortfall
+==========  ===============  ==================
+95%                  -4.0%               +6.0%
+99%                  +9.5%              +19.2%
+99.5%               +16.1%              +24.9%
+99.9%               +29.4%              +35.2%
+==========  ===============  ==================
+
+At 95% the value at risk is *lower* under the copula that has tail dependence in
+it. That is not an error and it is not noise. Tail dependence moves probability
+mass from the near tail to the far tail, and the total is one — so the 95%
+quantile, which sits close to the body, has less mass beyond it and comes in
+lower, while the mean of everything beyond it is higher because of where that mass
+went. Value at risk is a quantile and cannot see past itself; expected shortfall
+integrates the whole tail and sees it.
+
+Anyone reading only the value at risk at a shallow confidence would conclude the
+dependence assumption made the portfolio *safer*. This is the clearest case this
+library has for why the measure matters as much as the estimate, and it is the
+reason both figures travel together in the result.
+
 The mechanism is easier to see in the copula alone. Taking the fitted t copula
 and the Gaussian copula on the same correlation matrix, the fraction of draws
 with *all five* assets below their own 5% point is 0.42% against 0.14%, a factor

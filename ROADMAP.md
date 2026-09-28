@@ -436,6 +436,16 @@ copula's tail dependence coefficient at a correlation of zero and four degrees o
 freedom is 0.0756, because the shared mixing variable does not consult the
 correlation. The portfolio this method is for is the one that looks diversified.
 
+The two measures then disagree about the sign, which is the sharper finding. On
+that same book, fitted against Gaussian: value at risk −4.0% and expected
+shortfall +6.0% at 95%; +9.5% and +19.2% at 99%; +16.1% and +24.9% at 99.5%;
++29.4% and +35.2% at 99.9%. At 95% the value at risk is *lower* under the copula
+that has the tail dependence in it, because tail dependence moves mass from the
+near tail to the far tail and the total is one — a quantile close to the body has
+less beyond it, while the mean of what is beyond is larger. A reader taking the
+95% value at risk alone would conclude the assumption made the portfolio safer.
+Both figures travel together in the result for that reason.
+
 The mechanism is starker in the copula alone. All five assets below their own 5%
 point: 0.42% of draws under the fitted copula against 0.14% under the Gaussian one.
 Below their own 1% point: 0.057% against 0.005%. Independence gives 3.1e-7 and
