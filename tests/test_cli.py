@@ -919,3 +919,150 @@ def test_tail_fits_one_named_column(
         == 2
     )
     assert "no column named 'absent'" in capsys.readouterr().err
+
+
+# -- copula ------------------------------------------------------------------
+
+
+def copula_file(path: Path, *, periods: int = 400, degrees: float | None = 4.0) -> Path:
+    """A four-asset file with a known copula, small enough to run in a test."""
+    rng = random.Random(17)
+    rho = 0.5
+    lines = ["date,alpha,beta,gamma,delta"]
+    for t in range(periods):
+        common = rng.gauss(0.0, 1.0)
+        mixing = (
+            1.0
+            if degrees is None
+            else math.sqrt(degrees / rng.gammavariate(degrees / 2.0, 2.0))
+        )
+        row = [f"2024-{(t % 12) + 1:02d}-{(t % 28) + 1:02d}"]
+        for _ in range(4):
+            z = math.sqrt(rho) * common + math.sqrt(1.0 - rho) * rng.gauss(0.0, 1.0)
+            row.append(f"{0.012 * z * mixing:.8f}")
+        lines.append(",".join(row))
+    return write(path, "\n".join(lines) + "\n")
+
+
+def test_copula_reports_both_figures_and_the_pairs(tmp_path: Path) -> None:
+    code, output = run(
+        "copula", str(copula_file(tmp_path / "c.csv")), "--paths", "2000", "--seed", "1"
+    )
+    assert code == 0
+    assert "Student-t copula at" in output
+    assert "gaussian copula" in output
+    assert "tail dependence" in output
+    assert "alpha / beta" in output
+
+
+def test_copula_json_carries_every_number(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    code = main(
+        [
+            "--json",
+            "copula",
+            str(copula_file(tmp_path / "c.csv")),
+            "--paths",
+            "2000",
+            "--seed",
+            "2",
+        ],
+        stream=stream,
+    )
+    assert code == 0
+    payload = json.loads(stream.getvalue())
+    assert payload["family"] == "student_t"
+    assert payload["marginal"] == "empirical"
+    assert payload["paths"] == 2000
+    assert payload["degrees_of_freedom"] > 0.0
+    assert payload["value_at_risk"] > 0.0
+    assert payload["gaussian_value_at_risk"] > 0.0
+    assert payload["standard_error"] > 0.0
+    assert len(payload["tail_dependence"]) == 6
+    assert payload["tail_dependence"][0]["coefficient"] > 0.0
+    # The whole payload has to survive a strict encoder: a non-finite number is
+    # not JSON and a strict reader rejects the document, not the field.
+    json.dumps(payload, allow_nan=False)
+
+
+def test_copula_gaussian_family_omits_the_premium(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    code = main(
+        [
+            "--json",
+            "copula",
+            str(copula_file(tmp_path / "c.csv")),
+            "--family",
+            "gaussian",
+            "--paths",
+            "2000",
+            "--seed",
+            "3",
+        ],
+        stream=stream,
+    )
+    assert code == 0
+    payload = json.loads(stream.getvalue())
+    assert payload["degrees_of_freedom"] is None
+    assert "tail_dependence_premium" not in payload
+    assert all(pair["coefficient"] == 0.0 for pair in payload["tail_dependence"])
+
+
+def test_copula_extreme_value_marginals_are_selectable(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    code = main(
+        [
+            "--json",
+            "copula",
+            str(copula_file(tmp_path / "c.csv")),
+            "--marginal",
+            "extreme_value",
+            "--paths",
+            "2000",
+            "--seed",
+            "4",
+        ],
+        stream=stream,
+    )
+    assert code == 0
+    assert json.loads(stream.getvalue())["marginal"] == "extreme_value"
+
+
+def test_copula_fixed_degrees_are_reported_back(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    code = main(
+        [
+            "--json",
+            "copula",
+            str(copula_file(tmp_path / "c.csv")),
+            "--degrees",
+            "3",
+            "--paths",
+            "2000",
+            "--seed",
+            "5",
+        ],
+        stream=stream,
+    )
+    assert code == 0
+    assert json.loads(stream.getvalue())["degrees_of_freedom"] == 3.0
+
+
+def test_copula_reports_a_bad_path_count_as_a_sentence(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    code = main(
+        ["copula", str(copula_file(tmp_path / "c.csv")), "--paths", "10"],
+        stream=stream,
+    )
+    assert code == 2
+    assert stream.getvalue() == ""
+
+
+def test_copula_refuses_a_single_column_file(tmp_path: Path) -> None:
+    path = write(
+        tmp_path / "one.csv",
+        "alpha\n" + "\n".join(f"{0.001 * (i % 7 - 3):.6f}" for i in range(300)) + "\n",
+    )
+    stream = io.StringIO()
+    code = main(["copula", str(path), "--paths", "2000"], stream=stream)
+    assert code == 2

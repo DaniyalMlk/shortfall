@@ -34,6 +34,7 @@ from .contributions import (
     risk_parity,
     volatility_contributions,
 )
+from .copula import Family, Marginal, copula_risk
 from .covariance import ledoit_wolf, sample_covariance
 from .drawdown import calmar, maximum_drawdown, sortino, ulcer_index
 from .extreme import TailMethod, extreme_risk, mean_excess_curve
@@ -1077,6 +1078,138 @@ def command_tail(arguments: argparse.Namespace, stream: TextIO) -> dict[str, Any
     return payload
 
 
+def command_copula(arguments: argparse.Namespace, stream: TextIO) -> dict[str, Any]:
+    parsed = read_table(arguments.returns)
+    panel = parsed.panel
+    weights = parse_weights(arguments.weights, panel)
+    result = copula_risk(
+        panel,
+        weights,
+        confidence=arguments.confidence,
+        family=Family(arguments.family),
+        marginal=Marginal(arguments.marginal),
+        degrees_of_freedom=arguments.degrees,
+        paths=arguments.paths,
+        seed=arguments.seed,
+    )
+    fitted = result.copula
+    pairs = fitted.tail_dependence()
+    payload: dict[str, Any] = {
+        "observations": panel.observations,
+        "assets": panel.assets,
+        "confidence": arguments.confidence,
+        "family": fitted.family.value,
+        "marginal": result.marginal.value,
+        "paths": result.paths,
+        "degrees_of_freedom": fitted.degrees_of_freedom,
+        "likelihood_ratio": fitted.likelihood_ratio,
+        "projected": fitted.projected,
+        "value_at_risk": result.value_at_risk,
+        "expected_shortfall": result.expected_shortfall,
+        "standard_error": result.standard_error,
+        "gaussian_value_at_risk": result.gaussian_value_at_risk,
+        "gaussian_expected_shortfall": result.gaussian_expected_shortfall,
+        "tail_dependence": [
+            {
+                "first": pair.first,
+                "second": pair.second,
+                "correlation": pair.correlation,
+                "coefficient": pair.coefficient,
+            }
+            for pair in pairs
+        ],
+    }
+    if fitted.family is Family.STUDENT_T:
+        payload["tail_dependence_premium"] = result.tail_dependence_premium
+    if arguments.json:
+        return payload
+    label = (
+        "Student-t"
+        if fitted.family is Family.STUDENT_T
+        else "Gaussian"
+    )
+    degrees = (
+        f" at {fitted.degrees_of_freedom:.1f} degrees of freedom"
+        if fitted.degrees_of_freedom is not None
+        else ""
+    )
+    print(
+        f"{panel.assets} assets over {panel.observations} periods, "
+        f"{label} copula{degrees}, {result.paths:,} paths, "
+        f"{arguments.confidence:.1%} confidence\n",
+        file=stream,
+    )
+    table(
+        [
+            ["measure", "fitted copula", "gaussian copula"],
+            [
+                "value at risk",
+                percent(result.value_at_risk),
+                percent(result.gaussian_value_at_risk),
+            ],
+            [
+                "expected shortfall",
+                percent(result.expected_shortfall),
+                percent(result.gaussian_expected_shortfall),
+            ],
+        ],
+        stream,
+    )
+    print(
+        f"\nMonte Carlo standard error on the value at risk "
+        f"{percent(result.standard_error)}, from 20 batches; read it as a lower "
+        f"bound.",
+        file=stream,
+    )
+    if fitted.family is Family.STUDENT_T:
+        print(
+            f"Expected shortfall is {result.tail_dependence_premium:+.1%} against "
+            f"the same marginals and the same correlation matrix under a Gaussian "
+            f"copula, which has no tail dependence at any correlation below one. "
+            f"The two figures share their normal draws, so the difference is the "
+            f"dependence assumption and not simulation noise.",
+            file=stream,
+        )
+        print(
+            f"Likelihood ratio against the Gaussian special case "
+            f"{fitted.likelihood_ratio:.1f}.",
+            file=stream,
+        )
+    if fitted.projected:
+        print(
+            "The pairwise rank inversion was not a valid correlation matrix and "
+            "has been projected onto the nearest one, so the correlations below "
+            "are not exactly the ones estimated.",
+            file=stream,
+        )
+    shown = sorted(pairs, key=lambda pair: -pair.coefficient)[: arguments.pairs]
+    if shown:
+        print("", file=stream)
+        table(
+            [
+                ["pair", "correlation", "tail dependence"],
+                *[
+                    [
+                        f"{pair.first} / {pair.second}",
+                        f"{pair.correlation:+.3f}",
+                        f"{pair.coefficient:.3f}",
+                    ]
+                    for pair in shown
+                ],
+            ],
+            stream,
+        )
+        print(
+            "\nTail dependence is the limiting probability that one of a pair is "
+            "beyond its own quantile given that the other is. A Gaussian copula "
+            "puts it at zero for every correlation below one; that is a statement "
+            "about quantiles nobody has data for, which are the ones being "
+            "extrapolated to.",
+            file=stream,
+        )
+    return payload
+
+
 COMMANDS = {
     "risk": command_risk,
     "contributions": command_contributions,
@@ -1086,6 +1219,7 @@ COMMANDS = {
     "validate": command_validate,
     "volatility": command_volatility,
     "tail": command_tail,
+    "copula": command_copula,
 }
 
 
@@ -1106,7 +1240,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    def common(sub: argparse.ArgumentParser, *, weights: bool = True) -> None:
+    def common(
+        sub: argparse.ArgumentParser, *, weights: bool = True, shrink: bool = True
+    ) -> None:
         sub.add_argument("returns", type=Path, help="CSV of periodic returns")
         if weights:
             sub.add_argument(
@@ -1114,11 +1250,13 @@ def build_parser() -> argparse.ArgumentParser:
                 help="comma-separated portfolio weights; equal weights if omitted. "
                 "Not normalised: weights summing to 0.8 mean 20% in cash.",
             )
-        sub.add_argument(
-            "--shrink",
-            action="store_true",
-            help="use the Ledoit-Wolf shrinkage covariance instead of the sample one",
-        )
+        if shrink:
+            sub.add_argument(
+                "--shrink",
+                action="store_true",
+                help="use the Ledoit-Wolf shrinkage covariance instead of the "
+                "sample one",
+            )
 
     risk = subparsers.add_parser("risk", help="value at risk and expected shortfall")
     common(risk)
@@ -1268,6 +1406,61 @@ def build_parser() -> argparse.ArgumentParser:
         help="also print the mean excess curve with this many points, which is "
         "how the threshold gets chosen rather than defaulted into",
     )
+
+    dependence = subparsers.add_parser(
+        "copula",
+        help="portfolio risk with the dependence fitted separately from the marginals",
+        description=(
+            "Every other multi-asset route here ties the joint distribution to a "
+            "covariance matrix, which forces the probability of two assets being "
+            "in their own tails together to zero under a normal and to one number "
+            "for every pair under a multivariate t. This fits the dependence to "
+            "the ranks and each marginal on its own, then puts them back together "
+            "by simulation, and prints the Gaussian-copula figure beside its own "
+            "so the assumption can be priced rather than argued about."
+        ),
+    )
+    common(dependence, shrink=False)
+    dependence.add_argument("--confidence", type=float, default=0.99)
+    dependence.add_argument(
+        "--family",
+        choices=[family.value for family in Family],
+        default=Family.STUDENT_T.value,
+        help="which elliptical copula to fit. The Student-t has one extra "
+        "parameter, the degrees of freedom, and it is what carries joint tail "
+        "arrival; the Gaussian is the special case it is compared against.",
+    )
+    dependence.add_argument(
+        "--marginal",
+        choices=[marginal.value for marginal in Marginal],
+        default=Marginal.EMPIRICAL.value,
+        help="where each asset's own distribution comes from. Empirical assumes "
+        "no shape and cannot produce a draw past that asset's worst observation; "
+        "extreme_value splices a fitted generalised Pareto onto the loss tail, "
+        "which extrapolates deliberately.",
+    )
+    dependence.add_argument(
+        "--degrees",
+        type=float,
+        default=None,
+        help="fix the copula degrees of freedom instead of fitting them, which is "
+        "how to ask what a heavier joint tail would cost rather than what this "
+        "sample supports",
+    )
+    dependence.add_argument(
+        "--paths",
+        type=int,
+        default=40_000,
+        help="simulated paths. The default takes a few seconds; the reported "
+        "standard error is what says whether it was enough.",
+    )
+    dependence.add_argument(
+        "--pairs",
+        type=int,
+        default=10,
+        help="how many pairs of the tail dependence table to print, worst first",
+    )
+    dependence.add_argument("--seed", type=int, default=0)
 
     checked = subparsers.add_parser(
         "validate",

@@ -380,3 +380,113 @@ assumes a tail Pareto about the origin and a generalised Pareto is shifted by
 `scale / shape`, which at that threshold is 2.86 against a 90th percentile of 3.5.
 So a Hill curve disagreeing with the fit is a statement about the threshold, not
 evidence that either is broken.
+
+## Phase 16 — Dependence that is not elliptical
+
+Every multi-asset estimate so far read a covariance matrix. Under a normal that
+forces the probability of two assets being in their own tails together to zero at
+any correlation below one; under a multivariate t it forces one number for every
+pair, symmetric between the tails. A portfolio that is mildly correlated day to
+day and moves as one in a crash therefore had no representation here, and it is the
+portfolio the estimate exists for.
+
+- [x] Kendall's tau-b counted with a Fenwick tree rather than over pairs, with the
+      tie correction, checked against the quadratic definition on samples built to
+      be full of ties
+- [x] Spearman's rho, and both elliptical inversions, with the projection onto the
+      nearest valid correlation matrix reported rather than performed quietly
+- [x] Gaussian and Student-t copula log-likelihoods, with the marginal densities
+      dividing out
+- [x] Degrees of freedom by profile likelihood, checked against a grid over the
+      whole range, with a maximum at the upper bound returned as the bound
+- [x] The coefficient of tail dependence in closed form, cross-checked against the
+      elementary antiderivative at five degrees of freedom
+- [x] Marginals empirical or spliced with a fitted generalised Pareto tail, as a
+      separate switch from the dependence
+- [x] Simulated portfolio risk with the Gaussian-copula figure from the same normal
+      draws beside it, and a batched Monte Carlo standard error
+- [x] A `copula` command, and the whole payload asserted to survive a strict JSON
+      encoder
+
+Measured on the case it exists for: five equally weighted assets, 1,500
+observations from a t copula at 4 degrees of freedom with every pairwise tau at
+0.35, empirical marginals from the same sample, 20,000 paths, over three samples
+and three simulation seeds each. The fitted copula puts 99% expected shortfall
+10.6% above the Gaussian copula's on the identical marginals, correlation matrix
+and normal draws — 0.0433 against 0.0391 — with a spread of 2.6 percentage points
+across the nine runs and a range of 6.7% to 13.7%. At 99.5% it is 13.7%. Fitted
+degrees of freedom 4.2, range 4.0 to 4.5.
+
+A first attempt at this figure averaged three samples with one simulation seed
+each, which conflated sample variation with simulation variation and reported
+8.6% with a range that did not contain the properly averaged answer. The spread is
+quoted here because the point estimate on its own was misleading.
+
+Sweeping the pairwise tau on the same construction turned up the finding worth
+having, because it reverses the obvious expectation. Premium at 99%, three
+simulation seeds each: +19.7% at a tau of 0.05, +17.6% at 0.15, +12.0% at 0.30,
++5.9% at 0.50, +1.5% at 0.70 and −1.0% at 0.90. It is largest where the
+correlation is *lowest*.
+
+The reason: at a correlation near one the Gaussian copula already moves everything
+together, so the portfolio is one asset and no copula changes that asset's own
+marginal tail. At a correlation near zero the Gaussian copula promises real
+diversification in the extremes, and that is the promise that is false — the t
+copula's tail dependence coefficient at a correlation of zero and four degrees of
+freedom is 0.0756, because the shared mixing variable does not consult the
+correlation. The portfolio this method is for is the one that looks diversified.
+
+The two measures then disagree about the sign, which is the sharper finding. On
+that same book, fitted against Gaussian: value at risk −4.0% and expected
+shortfall +6.0% at 95%; +9.5% and +19.2% at 99%; +16.1% and +24.9% at 99.5%;
++29.4% and +35.2% at 99.9%. At 95% the value at risk is *lower* under the copula
+that has the tail dependence in it, because tail dependence moves mass from the
+near tail to the far tail and the total is one — a quantile close to the body has
+less beyond it, while the mean of what is beyond is larger. A reader taking the
+95% value at risk alone would conclude the assumption made the portfolio safer.
+Both figures travel together in the result for that reason.
+
+The mechanism is starker in the copula alone. All five assets below their own 5%
+point: 0.42% of draws under the fitted copula against 0.14% under the Gaussian one.
+Below their own 1% point: 0.057% against 0.005%. Independence gives 3.1e-7 and
+1e-10. A factor of three becomes a factor of eleven one quantile deeper, because
+one of the two limits is zero.
+
+**The negative result matters more than the positive one.** On 1,500 observations
+from a genuine Gaussian copula the same procedure fits 92 degrees of freedom and
+reports a premium of 0.2% over the same nine runs, spread 0.2 percentage points,
+range −0.1% to +0.5%. On `examples/returns.csv` it lands at 28.5 degrees of
+freedom with a likelihood ratio of 5.2 — weak evidence — and the premium behaves
+accordingly: +0.4% over six simulation seeds with a spread of 1.3 percentage
+points, not distinguishable from zero.
+
+The paired draws are worth about a factor of two and not more. Sharing the normals
+halves the spread of the difference — 2.4 percentage points against 4.6 on the
+synthetic sample, 1.3 against 2.8 on the bundled one — and cannot do better,
+because the chi-square mixing draw is not shared and is the whole difference
+between the two copulas.
+
+Two things were measured because they were about to be asserted instead. One joint
+8-sigma point added to 300 independent observations moves a Pearson correlation by
+0.175 and Kendall's tau by 0.0066; the bound on the second is
+`2(1 + |tau|)/(n + 1)`, which is 0.0066 and *not* the `2/n` a first draft claimed —
+appending a point changes the denominator as well as the numerator. And the closed
+form for tail dependence at four degrees of freedom and a correlation of 0.5 is
+0.25317, not the 0.2546 written from memory; it is now checked against the
+elementary antiderivative of the t density at five degrees of freedom, which shares
+no code with the series the library evaluates.
+
+One defect, and it would have been intermittent. The generalised Pareto splice
+point has to be the fit's realised exceedance fraction, not the tail fraction asked
+for: a threshold at the 5% point of 800 losses is exceeded by 39 of them, so the
+fit describes the worst 4.875% and refuses anything shallower. Splicing at the
+nominal 5% routed a thin band of probabilities to a tail that declines to answer
+for them, which surfaced on one seed in five.
+
+The optimisation worth recording is exact rather than approximate. The quantile
+function is the expensive part of a copula likelihood, and the ranks of every
+column are a permutation of `1..T` — so a panel of `T` observations and `d` assets
+presents `T` distinct probabilities, not `T*d`. Memoising within the evaluation
+took one pass on 800 observations of four assets from 835ms to 201ms, and the whole
+fit from 40s to 6.6s, landing at a likelihood no lower than a quarter-step grid
+search over the same range.

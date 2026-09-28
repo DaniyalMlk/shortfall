@@ -75,8 +75,13 @@ jobs:
           shortfall volatility examples/returns.csv --paths 5000 --horizon 10
           shortfall tail examples/returns.csv --weights 0.4,0.25,0.15,0.2 --curve 6
           shortfall tail examples/returns.csv --confidence 0.9999 --column equity
+          shortfall copula examples/returns.csv --weights 0.4,0.25,0.15,0.2 \
+            --paths 4000 --seed 1
+          shortfall copula examples/returns.csv --family gaussian \
+            --marginal extreme_value --paths 4000 --seed 2
           shortfall --json risk examples/returns.csv > /dev/null
           shortfall --json tail examples/returns.csv > /dev/null
+          shortfall --json copula examples/returns.csv --paths 4000 > /dev/null
 
   package:
     name: Wheel installs and runs
