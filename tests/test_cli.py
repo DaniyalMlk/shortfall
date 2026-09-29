@@ -1066,3 +1066,130 @@ def test_copula_refuses_a_single_column_file(tmp_path: Path) -> None:
     stream = io.StringIO()
     code = main(["copula", str(path), "--paths", "2000"], stream=stream)
     assert code == 2
+
+
+def ohlc_file(path: Path, *, drift: float = 0.0, header: bool = True, dated: bool = True) -> Path:
+    """A synthetic OHLC file: 120 bars of 200 ticks at 1.1% a bar."""
+    rng = random.Random(5)
+    price = 100.0
+    lines = ["date,open,high,low,close"] if header else []
+    for day in range(120):
+        opening = price
+        high = price
+        low = price
+        for _ in range(200):
+            price *= math.exp(drift / 200.0 + 0.011 * rng.gauss(0.0, 1.0) / math.sqrt(200.0))
+            high = max(high, price)
+            low = min(low, price)
+        cells = [f"{opening:.4f}", f"{high:.4f}", f"{low:.4f}", f"{price:.4f}"]
+        if dated:
+            cells.insert(0, f"2026-{1 + day // 30:02d}-{1 + day % 30:02d}")
+        lines.append(",".join(cells))
+    return write(path, "\n".join(lines) + "\n")
+
+
+def test_bars_reports_every_estimator(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    code = main(["bars", "--bars", str(ohlc_file(tmp_path / "b.csv"))], stream=stream)
+    assert code == 0
+    out = stream.getvalue()
+    for name in (
+        "close-to-close", "parkinson", "garman-klass", "rogers-satchell",
+        "garman-klass-yang-zhang", "yang-zhang",
+    ):
+        assert name in out
+    assert "vs close-to-close" in out
+
+
+def test_bars_estimators_agree_on_data_that_meets_their_assumptions(
+    tmp_path: Path,
+) -> None:
+    stream = io.StringIO()
+    code = main(
+        ["bars", "--bars", str(ohlc_file(tmp_path / "b.csv")), "--json"], stream=stream
+    )
+    assert code == 0
+    values = json.loads(stream.getvalue())["annualised_volatility"]
+    # No gap and a negligible drift, so the only systematic difference left is
+    # the tick bias, which moves the range estimators a few per cent below the
+    # close-to-close one and no further.
+    baseline = values["close-to-close"]
+    for name, value in values.items():
+        if name != "close-to-close":
+            assert 0.90 < value / baseline < 1.00
+
+
+def test_bars_shows_a_trend_as_a_disagreement(tmp_path: Path) -> None:
+    # Two per cent of drift a day against 1.1% of volatility. Parkinson reads
+    # it as volatility, Rogers-Satchell does not, and the gap between them is
+    # the diagnostic the command exists to show.
+    stream = io.StringIO()
+    code = main(
+        ["bars", "--bars", str(ohlc_file(tmp_path / "t.csv", drift=0.02)), "--json"],
+        stream=stream,
+    )
+    assert code == 0
+    values = json.loads(stream.getvalue())["annualised_volatility"]
+    assert values["parkinson"] > 1.25 * values["rogers-satchell"]
+    assert values["yang-zhang"] < 1.05 * values["rogers-satchell"]
+
+
+def test_bars_reports_the_tick_correction_when_asked(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    code = main(
+        ["bars", "--bars", str(ohlc_file(tmp_path / "b.csv")), "--ticks", "200", "--json"],
+        stream=stream,
+    )
+    assert code == 0
+    payload = json.loads(stream.getvalue())
+    assert payload["tick_bias_factor"] == pytest.approx(0.8994, abs=1e-4)
+    raw = payload["annualised_volatility"]["parkinson"]
+    corrected = payload["corrected"]["parkinson"]
+    assert corrected == pytest.approx(raw / math.sqrt(0.8994), rel=1e-3)
+    # Close-to-close is not corrected, because it is not biased.
+    assert "close-to-close" not in payload["corrected"]
+
+
+def test_bars_reads_a_file_with_no_header_and_no_dates(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    code = main(
+        [
+            "bars",
+            "--bars",
+            str(ohlc_file(tmp_path / "plain.csv", header=False, dated=False)),
+            "--json",
+        ],
+        stream=stream,
+    )
+    assert code == 0
+    assert json.loads(stream.getvalue())["bars"] == 120
+
+
+def test_bars_names_the_line_of_an_impossible_bar(tmp_path: Path) -> None:
+    path = write(
+        tmp_path / "bad.csv",
+        "open,high,low,close\n100,101,99,100\n100,99,98,100\n100,101,99,100\n",
+    )
+    stream = io.StringIO()
+    assert main(["bars", "--bars", str(path)], stream=stream) == 2
+    assert stream.getvalue() == ""
+
+
+def test_bars_names_the_line_of_a_non_numeric_cell(tmp_path: Path) -> None:
+    path = write(
+        tmp_path / "bad.csv", "open,high,low,close\n100,101,99,100\n100,x,98,100\n"
+    )
+    stream = io.StringIO()
+    assert main(["bars", "--bars", str(path)], stream=stream) == 2
+
+
+def test_bars_refuses_a_short_row(tmp_path: Path) -> None:
+    path = write(tmp_path / "bad.csv", "open,high,low,close\n100,101,99\n")
+    stream = io.StringIO()
+    assert main(["bars", "--bars", str(path)], stream=stream) == 2
+
+
+def test_bars_refuses_an_empty_file(tmp_path: Path) -> None:
+    path = write(tmp_path / "empty.csv", "\n")
+    stream = io.StringIO()
+    assert main(["bars", "--bars", str(path)], stream=stream) == 2

@@ -42,6 +42,7 @@ from .factors import attribute_risk, fit_factor_model
 from .historical import historical_risk
 from .horizon import Innovations, horizon_risk
 from .parametric import Distribution, portfolio_risk
+from .realised import BadBar, Bars, Estimator, realised_volatility, tick_bias_factor
 from .series import Panel
 from .volatility import Innovation, fat_tail_test, fit_garch
 
@@ -1210,6 +1211,130 @@ def command_copula(arguments: argparse.Namespace, stream: TextIO) -> dict[str, A
     return payload
 
 
+def read_bars(path: Path) -> Bars:
+    """Parse an OHLC CSV, reporting the line of anything malformed.
+
+    Four numeric columns in the order open, high, low, close, with an optional
+    leading date column and an optional header. The header is detected the
+    same way the returns reader detects one: a first row whose cells are not
+    all numbers.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise InputError(f"could not read {path}: {error}") from error
+
+    rows = [row for row in csv.reader(text.splitlines()) if row and any(c.strip() for c in row)]
+    if not rows:
+        raise InputError(f"{path} is empty")
+    if not all(_is_number(cell.strip()) for cell in rows[0][-4:]):
+        rows = rows[1:]
+    if not rows:
+        raise InputError(f"{path} has a header and no data")
+
+    values: list[tuple[float, float, float, float]] = []
+    for offset, row in enumerate(rows):
+        line = offset + 1
+        cells = [cell.strip() for cell in row]
+        if len(cells) < 4:
+            raise InputError(
+                f"{path} line {line} has {len(cells)} fields; a bar needs four, "
+                "open, high, low and close, after any date column"
+            )
+        # A leading date column is dropped rather than parsed: nothing here
+        # needs the date, and refusing a file for the format of a column that
+        # is not used would be unhelpful.
+        quartet = cells[-4:]
+        for name, cell in zip(("open", "high", "low", "close"), quartet, strict=True):
+            if not _is_number(cell):
+                raise InputError(f"{path} line {line}, {name}: {cell!r} is not a number")
+        numbers = [float(cell) for cell in quartet]
+        values.append((numbers[0], numbers[1], numbers[2], numbers[3]))
+
+    try:
+        return Bars.from_rows(str(path), values)
+    except BadBar as error:
+        raise InputError(str(error)) from error
+
+
+def command_bars(arguments: argparse.Namespace, stream: TextIO) -> dict[str, Any]:
+    """Every estimator on one file, so the disagreement between them is visible.
+
+    The disagreement is the output. Two estimators of the same quantity that
+    differ by a third are saying something about the data -- a trend, an
+    overnight gap, or too few trades in the bar -- and which one is right
+    depends on which of those it is.
+    """
+    bars = read_bars(arguments.bars)
+    periods = arguments.periods
+    estimates = {
+        estimator.value: realised_volatility(bars, periods, estimator)
+        for estimator in Estimator
+        if len(bars) >= _MINIMUM_BARS[estimator]
+    }
+    baseline = estimates.get(Estimator.CLOSE_TO_CLOSE.value)
+    payload: dict[str, Any] = {
+        "bars": len(bars),
+        "periods_per_year": periods,
+        "annualised_volatility": estimates,
+    }
+    if arguments.ticks is not None:
+        factor = tick_bias_factor(arguments.ticks)
+        payload["tick_bias_factor"] = factor
+        payload["corrected"] = {
+            name: value / math.sqrt(factor)
+            for name, value in estimates.items()
+            if name != Estimator.CLOSE_TO_CLOSE.value
+        }
+    if arguments.json:
+        return payload
+
+    print(f"Annualised volatility from {len(bars)} bars\n", file=stream)
+    rows = [["estimator", "volatility", "vs close-to-close", "assumes"]]
+    for estimator in Estimator:
+        name = estimator.value
+        if name not in estimates:
+            continue
+        value = estimates[name]
+        ratio = "-" if not baseline else f"{value / baseline:.3f}"
+        rows.append([name, percent(value), ratio, _ASSUMES[estimator]])
+    table(rows, stream)
+
+    if arguments.ticks is not None:
+        factor = payload["tick_bias_factor"]
+        print(
+            f"\nAt {arguments.ticks} price observations a bar, a range-based variance "
+            f"is expected to read {factor:.4f} of the truth, because the observed high "
+            f"and low sit inside the continuous ones. Dividing by the square root of "
+            f"that:\n",
+            file=stream,
+        )
+        corrected = [["estimator", "corrected volatility"]]
+        for name, value in payload["corrected"].items():
+            corrected.append([name, percent(value)])
+        table(corrected, stream)
+    return payload
+
+
+_MINIMUM_BARS = {
+    Estimator.CLOSE_TO_CLOSE: 3,
+    Estimator.PARKINSON: 1,
+    Estimator.GARMAN_KLASS: 1,
+    Estimator.ROGERS_SATCHELL: 1,
+    Estimator.GARMAN_KLASS_YANG_ZHANG: 2,
+    Estimator.YANG_ZHANG: 4,
+}
+
+_ASSUMES = {
+    Estimator.CLOSE_TO_CLOSE: "nothing; uses one price in four",
+    Estimator.PARKINSON: "no drift, no overnight gap",
+    Estimator.GARMAN_KLASS: "no drift, no overnight gap",
+    Estimator.ROGERS_SATCHELL: "no overnight gap",
+    Estimator.GARMAN_KLASS_YANG_ZHANG: "no drift",
+    Estimator.YANG_ZHANG: "nothing; uses all four and the previous close",
+}
+
+
 COMMANDS = {
     "risk": command_risk,
     "contributions": command_contributions,
@@ -1220,6 +1345,7 @@ COMMANDS = {
     "volatility": command_volatility,
     "tail": command_tail,
     "copula": command_copula,
+    "bars": command_bars,
 }
 
 
@@ -1502,6 +1628,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     checked.add_argument("--degrees", type=float, default=5.0)
     checked.add_argument("--seed", type=int, default=0)
+    bars = subparsers.add_parser(
+        "bars",
+        help="volatility from open, high, low and close",
+        description=(
+            "Reads a CSV of open, high, low and close -- with an optional leading "
+            "date column and an optional header -- and reports every estimator in "
+            "the library beside the close-to-close baseline. The disagreement "
+            "between them is the output: a trend inflates the estimators that "
+            "assume no drift, an overnight gap deflates the ones that only look "
+            "inside the bar, and too few trades deflates all of them."
+        ),
+    )
+    bars.add_argument("--bars", type=Path, required=True, help="CSV of OHLC rows")
+    bars.add_argument(
+        "--periods", type=float, default=252.0, help="bars per year, for annualising"
+    )
+    bars.add_argument(
+        "--ticks",
+        type=int,
+        default=None,
+        help="price observations within a bar; reports the discretisation "
+        "correction alongside",
+    )
+    bars.add_argument("--json", action="store_true")
+
     return parser
 
 
