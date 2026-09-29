@@ -1100,6 +1100,126 @@ the matrix from its eigenpairs did not notice, and neither did the trace or the
 determinant. Only checking `Av` against `wv` directly did, which is now the test
 the criterion is set by.
 
+## Volatility from the whole bar
+
+Everything above reads a period as one number, the close-to-close return. A bar
+usually carries three more, and the two extremes say a great deal: a day that
+closes where it opened after travelling four per cent is not a quiet day, and
+the close-to-close estimator records it as one.
+
+```bash
+shortfall bars --bars ohlc.csv --ticks 200
+```
+
+```
+estimator                volatility  vs close-to-close                                        assumes
+-----------------------  ----------  -----------------  ---------------------------------------------
+close-to-close              17.156%              1.000                nothing; uses one price in four
+parkinson                   16.442%              0.958                     no drift, no overnight gap
+garman-klass                16.192%              0.944                     no drift, no overnight gap
+rogers-satchell             16.144%              0.941                               no overnight gap
+garman-klass-yang-zhang     16.190%              0.944                                       no drift
+yang-zhang                  16.274%              0.949  nothing; uses all four and the previous close
+```
+
+The disagreement is the output. Two estimates of the same quantity that differ
+by a third are saying something about the data, and the `assumes` column says
+what.
+
+### The efficiency, measured rather than quoted
+
+150 independent samples of 60 bars, each bar built from 256 observations of a
+geometric Brownian motion, no drift and no gap — which is to say, data that
+satisfies every assumption every estimator makes:
+
+| estimator | close-to-close samples it is worth |
+|---|---|
+| close-to-close | 1.00 |
+| Parkinson | 5.02 |
+| Rogers-Satchell | 6.42 |
+| Yang-Zhang | 6.78 |
+| Garman-Klass-Yang-Zhang | 7.52 |
+| Garman-Klass | 7.74 |
+
+Close to the figures the original papers derive, which is the point of
+measuring: on data that meets the assumptions, they hold.
+
+### The number the papers do not quote
+
+Every one of those efficiencies is derived for the *continuous* high and low.
+Real extremes come from finitely many trades and sit inside the true ones, so
+every range estimator is biased **down**. Measured, as a fraction of the true
+volatility:
+
+| ticks a bar | close-to-close | Parkinson | predicted |
+|---|---|---|---|
+| 16 | 0.991 | 0.847 | 0.818 |
+| 64 | 1.004 | 0.920 | 0.909 |
+| 256 | 1.000 | 0.960 | 0.954 |
+
+Close-to-close is unbiased at every tick count, because it reads only
+endpoints and those are observed exactly however few trades happened in
+between. That is the other half of the trade: the range estimators buy a
+five- to eightfold variance reduction and pay for it with a systematic error
+that more data does not remove.
+
+`tick_bias_factor` predicts it. Getting the prediction right needed a step a
+first attempt skipped. The discrete extreme's expected shortfall is
+`0.5826 sigma / sqrt(m)` at each end — the same overshoot constant,
+`-zeta(1/2)/sqrt(2 pi)`, that appears in the continuity correction for a
+discretely monitored barrier. Turning it into a *factor* means dividing by the
+expected range of the continuous motion, `2 sqrt(2/pi) sigma`, not by the
+volatility. Without that normalisation the correction is out by a factor of
+1.6: it predicts a 26% shortfall at sixteen ticks where the measured one is
+15%.
+
+### Which assumption is false in your data
+
+A trend, in multiples of the per-bar volatility. Shown as the inflation over
+the same estimator's no-drift reading, so the tick bias above is divided out:
+
+| drift / volatility | Parkinson | Garman-Klass | Rogers-Satchell | Yang-Zhang |
+|---|---|---|---|---|
+| 0.5 | 1.043 | 1.012 | 0.992 | 0.994 |
+| 1.0 | 1.174 | 1.059 | 0.986 | 0.989 |
+| 2.0 | 1.594 | 1.226 | 0.965 | 0.971 |
+
+The inflation is quadratic in the ratio, which decides when to care. An equity
+at 16% annual volatility and a 12% expected return has a daily ratio near
+0.05, where the effect is four parts in ten thousand and nobody should think
+about it. A five-minute bar in a directional hour, or a monthly bar in a
+trending year, reaches one and Parkinson reads a sixth more volatility than
+there is.
+
+An overnight gap carrying half the total variance:
+
+| estimator | reads |
+|---|---|
+| close-to-close | 1.005 |
+| Parkinson | 0.681 |
+| Garman-Klass | 0.668 |
+| Rogers-Satchell | 0.667 |
+| Garman-Klass-Yang-Zhang | 0.975 |
+| Yang-Zhang | 0.978 |
+
+The three intraday estimators measure everything from the open, so a jump that
+moves the open, high, low and close together is invisible to them. They read
+`1/sqrt(2)` of the truth, times the tick bias they already carry — which is
+exactly what the numbers are, and the suite asserts that decomposition rather
+than just the totals.
+
+### Non-negativity is proved, not clamped
+
+Garman-Klass subtracts `(2 log 2 - 1) c^2` from `0.5 r^2` and looks as though
+it could go below zero on a bar that closed at its own extreme. It cannot: the
+high is at least the larger of the open and the close and the low at most the
+smaller, so `r >= |c|` by construction and `0.5 r^2` dominates `0.386 c^2`
+term by term. Rogers-Satchell is a sum of two products of same-signed factors,
+and Yang-Zhang is a positive combination of two sample variances and a
+Rogers-Satchell. A clamp here would have been unreachable code standing in for
+a proof, so there is a proof and a search over four thousand bars built to sit
+on their own extremes, looking for the counterexample.
+
 ## Development
 
 ```bash
