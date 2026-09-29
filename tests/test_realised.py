@@ -507,3 +507,85 @@ class TestAgainstEachOther:
         one = volatility_ratio(samples, Estimator.YANG_ZHANG)
         two = volatility_ratio(samples, Estimator.ROGERS_SATCHELL)
         assert one == pytest.approx(two, rel=0.02)
+
+
+class TestTheFiguresInTheReadme:
+    """Every number the README quotes, recomputed at the configuration it names."""
+
+    def test_the_efficiency_table_is_in_the_order_it_is_printed_in(self) -> None:
+        order = [
+            Estimator.CLOSE_TO_CLOSE,
+            Estimator.PARKINSON,
+            Estimator.ROGERS_SATCHELL,
+            Estimator.YANG_ZHANG,
+            Estimator.GARMAN_KLASS_YANG_ZHANG,
+            Estimator.GARMAN_KLASS,
+        ]
+        measured = [efficiency(batch(7), estimator) for estimator in order]
+        assert measured == sorted(measured)
+        assert measured == pytest.approx([1.00, 5.02, 6.42, 6.78, 7.52, 7.74], abs=0.02)
+
+    @pytest.mark.parametrize(
+        ("ticks", "close", "park", "predicted"),
+        [(16, 0.991, 0.847, 0.818), (64, 1.004, 0.920, 0.909), (256, 1.000, 0.960, 0.954)],
+    )
+    def test_the_tick_bias_table(
+        self, ticks: int, close: float, park: float, predicted: float
+    ) -> None:
+        samples = batch(7, ticks=ticks)
+        assert volatility_ratio(samples, Estimator.CLOSE_TO_CLOSE) == pytest.approx(
+            close, abs=1e-3
+        )
+        assert volatility_ratio(samples, Estimator.PARKINSON) == pytest.approx(park, abs=1e-3)
+        assert math.sqrt(tick_bias_factor(ticks)) == pytest.approx(predicted, abs=1e-3)
+
+    @pytest.mark.parametrize(
+        ("ratio", "expected"),
+        [
+            (0.5, (1.043, 1.012, 0.992, 0.994)),
+            (1.0, (1.174, 1.059, 0.986, 0.989)),
+            (2.0, (1.594, 1.226, 0.965, 0.971)),
+        ],
+    )
+    def test_the_drift_table(self, ratio: float, expected: tuple[float, ...]) -> None:
+        samples = batch(23, drift_ratio=ratio)
+        order = (
+            Estimator.PARKINSON,
+            Estimator.GARMAN_KLASS,
+            Estimator.ROGERS_SATCHELL,
+            Estimator.YANG_ZHANG,
+        )
+        got = tuple(
+            volatility_ratio(samples, estimator)
+            / TestDriftSensitivity.BASELINE[estimator]
+            for estimator in order
+        )
+        assert got == pytest.approx(expected, abs=2e-3)
+
+    def test_the_quadratic_claim_about_a_realistic_daily_ratio(self) -> None:
+        # The README says an equity near a daily drift-to-volatility ratio of
+        # 0.05 sees an effect of four parts in ten thousand. Extrapolated from
+        # the measured quadratic rather than simulated, because four parts in
+        # ten thousand is below what this sample size can resolve -- which is
+        # itself the reason the claim is worth stating that way.
+        measured = (
+            volatility_ratio(batch(23, drift_ratio=0.5), Estimator.PARKINSON)
+            / TestDriftSensitivity.BASELINE[Estimator.PARKINSON]
+        ) - 1.0
+        coefficient = measured / 0.25
+        assert coefficient * 0.05**2 == pytest.approx(4e-4, abs=1.5e-4)
+
+    @pytest.mark.parametrize(
+        ("estimator", "expected"),
+        [
+            (Estimator.CLOSE_TO_CLOSE, 1.005),
+            (Estimator.PARKINSON, 0.681),
+            (Estimator.GARMAN_KLASS, 0.668),
+            (Estimator.ROGERS_SATCHELL, 0.667),
+            (Estimator.GARMAN_KLASS_YANG_ZHANG, 0.975),
+            (Estimator.YANG_ZHANG, 0.978),
+        ],
+    )
+    def test_the_gap_table(self, estimator: Estimator, expected: float) -> None:
+        got = volatility_ratio(batch(29, gap_ratio=1.0), estimator, SIGMA * math.sqrt(2.0))
+        assert got == pytest.approx(expected, abs=1.5e-3)

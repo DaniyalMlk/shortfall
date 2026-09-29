@@ -490,3 +490,20 @@ presents `T` distinct probabilities, not `T*d`. Memoising within the evaluation
 took one pass on 800 observations of four assets from 835ms to 201ms, and the whole
 fit from 40s to 6.6s, landing at a likelihood no lower than a quarter-step grid
 search over the same range.
+
+## Phase 17 — The whole bar, not just the close
+
+- [x] A validated bar type: a high below its own close or a low above its open
+      is refused where it enters, not where it bites
+- [x] Parkinson, Garman-Klass, Rogers-Satchell, the open-jump-adjusted
+      Garman-Klass and Yang-Zhang, each with the assumption it rests on stated
+- [x] Efficiency against close-to-close measured on the caller's own sample
+      size rather than quoted from the literature
+- [x] The discretisation bias of the observed range measured, and predicted by
+      a closed form that is checked against the measurement
+- [x] Drift and gap sensitivity measured for every estimator, so the choice
+      between them is made on what is false in the data rather than on which
+      number is largest
+- [x] Non-negativity proved rather than clamped
+- [x] A command-line entry point reading OHLC rows and reporting the
+      disagreement between the estimators as the diagnostic it is
