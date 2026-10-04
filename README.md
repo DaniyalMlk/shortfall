@@ -1220,6 +1220,60 @@ Rogers-Satchell. A clamp here would have been unreachable code standing in for
 a proof, so there is a proof and a search over four thousand bars built to sit
 on their own extremes, looking for the counterexample.
 
+## Which of two adequate models is better
+
+`validate` asks whether one model is adequate. Ranking two that both pass is a
+different question, and it needs a scoring function that is minimised —
+uniquely — at the truth:
+
+```python
+from shortfall import compare, fz0_loss
+
+first = fz0_loss(returns, var_a, es_a, confidence=0.975)
+second = fz0_loss(returns, var_b, es_b, confidence=0.975)
+compare(first, second).better        # 1 or 2, or None for a tie
+```
+
+The value at risk has such a score of its own — the pinball loss, whose
+expected value differentiates to `Φ(v/σ) − c` and so vanishes exactly at the
+quantile. **Expected shortfall does not.** It is not elicitable: no `S(e, l)`
+is minimised at the shortfall for every distribution. The pair jointly is, and
+`fz0_loss` is the zero-homogeneous Fissler-Ziegel function.
+
+### The score anybody builds first is wrong by about a third
+
+The obvious construction is the pinball loss for the quantile plus a squared
+error on the breaches for the shortfall, and *given the quantile* it does
+elicit the conditional tail mean — which is why it looks right. Jointly it does
+not. Its expected value differentiates in the quantile, at the true pair, to
+`−φ(z)(VaR − ES)²/α`: strictly negative whenever the shortfall differs from the
+quantile, which is always.
+
+So its optimum sits above the truth, and by the squared gap between the two —
+a measure of how thick the tail is. Measured: **48.8% above the true value at
+risk and 34.5% above the true shortfall at 95% confidence**, 46.0% and 34.9% at
+97.5%, 44.3% and 35.7% at 99%.
+
+And the two rank the same pair in opposite orders. A truthful forecaster
+against one shading up to the obvious score's own optimum: Fissler-Ziegel
+prefers the truthful one, 0.84921 against 1.06369, and the obvious score
+prefers the shaded one, 0.07849 against 0.17513. Either comparison looks
+decisive.
+
+### What the robust variance is actually worth
+
+`compare` uses a Newey-West standard error and reports the naive one beside it,
+because the gap turns out to be small. Measured over four thousand observations
+against a log-volatility process: **0.99** at zero persistence — below one,
+which is the Bartlett estimator's own finite-sample noise — and **1.10** and
+**1.06** at persistences of 0.95 and 0.995. The largest effect on a t statistic
+is −3.53 becoming −3.20. The bandwidth earns its place because its direction is
+not knowable in advance, not because it is large.
+
+```bash
+shortfall score forecasts.csv --es-columns es_a es_b --confidence 0.975
+```
+
 ## Development
 
 ```bash

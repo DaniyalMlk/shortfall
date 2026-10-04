@@ -507,3 +507,76 @@ search over the same range.
 - [x] Non-negativity proved rather than clamped
 - [x] A command-line entry point reading OHLC rows and reporting the
       disagreement between the estimators as the diagnostic it is
+
+## Phase 18 — Which of two adequate models is better
+
+- [x] The pinball loss, strictly consistent for the value at risk alone
+- [x] A strictly consistent joint score for the pair, since the shortfall is
+      not elicitable by itself
+- [x] Consistency demonstrated exactly rather than simulated
+- [x] The score anybody builds first, shown not to be consistent, with the size
+      of its bias and the first-order condition that explains it
+- [x] A Diebold-Mariano comparison with an autocorrelation-robust variance, and
+      a measurement of what that variance is actually worth
+- [x] A command-line entry point scoring two forecast series against the same
+      returns
+
+`backtest` asks whether one model is adequate: the right number of breaches,
+spread out, with tails of the right size. That is a hypothesis test and it
+cannot rank two models that both pass. Ranking them needs a *scoring function*,
+and a scoring function is worth nothing unless it is strictly consistent — the
+expected score minimised, uniquely, at the truth. Otherwise a forecaster who
+optimises it is optimising towards something else.
+
+**The value at risk has one; the shortfall does not have one of its own.** The
+pinball loss is strictly consistent for a quantile — for a normal law its
+expected value differentiates to `Phi(v/sigma) - c`, zero exactly at the
+quantile. Expected shortfall is not elicitable at all, so the pair has to be
+scored jointly, and the zero-homogeneous Fissler-Ziegel function is the usual
+choice. Its two first-order conditions reduce to the definitions of the two
+quantities, and minimising its exact expected value on a refining grid recovers
+the true pair to 2e-08 at three confidence levels.
+
+**Zero homogeneity is a weaker statement than it sounds, and the test had it
+wrong first.** The score is not invariant under rescaling: multiplying
+everything by `k` moves it by exactly `log k`, from the `log e` term. The shift
+does not depend on the forecast, so every *difference* between two models is
+untouched and the ranking cannot move — which is what makes the member
+scale-free, and is not what the first draft of the test asserted. It failed by
+precisely `log 1000`.
+
+**The score anybody builds first is wrong by about a third.** The obvious
+construction is the pinball loss for the quantile plus a squared error on the
+breaches for the shortfall, and *given the quantile* it does elicit the
+conditional tail mean, which is why it looks right. Jointly it does not. Its
+expected value differentiates in the quantile, at the true pair, to
+
+    -phi(z) (VaR - ES)^2 / alpha
+
+which is strictly negative whenever the shortfall differs from the quantile —
+that is, always — so the optimum sits above the truth by the squared gap
+between them, which is a measure of how thick the tail is. Measured: **48.8%
+above the true value at risk and 34.5% above the true shortfall at 95%
+confidence**, 46.0% and 34.9% at 97.5%, 44.3% and 35.7% at 99%. Not a
+subtlety; a third of the number.
+
+**And the two scores rank the same pair in opposite orders.** A truthful
+forecaster at 97.5% against one shading both numbers up to the obvious score's
+own optimum: under Fissler-Ziegel the truthful one wins, 0.84921 against
+1.06369; under the obvious score the shaded one wins, 0.07849 against 0.17513.
+A desk choosing its model with the obvious score picks the wrong one, and the
+comparison looks decisive either way round.
+
+**The robust variance is real and modest, which is worth saying because the
+first draft asserted otherwise.** "Score differences autocorrelate under
+volatility clustering, so a naive standard error understates the sampling
+error" is a plausible sentence and was written before it was checked. Measured
+over four thousand observations comparing two exponentially weighted models
+against a log-volatility process: at zero persistence the robust standard error
+is **0.99** times the naive one — *below* one, which is the Bartlett estimator's
+own finite-sample noise rather than a correction in the wrong direction — and
+at persistences of 0.95 and 0.995 it is **1.10** and **1.06**. The largest
+effect on a t statistic across those runs is -3.53 becoming -3.20. The
+bandwidth earns its place because its direction is not knowable in advance, not
+because it is large, and `compare` returns both standard errors so a reader can
+see that for themselves.
