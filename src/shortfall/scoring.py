@@ -209,7 +209,11 @@ def fz0_loss(
     Being homogeneous of degree zero, it ranks two models the same way whatever
     the forecasts are denominated in. That is why this member rather than
     another: a ranking that moved when the returns were rescaled would be a
-    property of the units.
+    property of the units. The score itself is *not* invariant — rescaling
+    everything by ``k`` moves it by exactly ``log k``, from the ``log e`` term
+    — but that shift does not depend on the forecast, so every difference
+    between two models is untouched and the ordering cannot move. Zero
+    homogeneity is a statement about the ranking, not about the number.
 
     Args:
         observed: Realised returns.
