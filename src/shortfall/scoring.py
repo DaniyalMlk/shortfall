@@ -58,12 +58,21 @@ against 1.06369. Under the obvious score the shaded one wins, 0.07849 against
 0.17513. A desk choosing its model with the obvious score picks the model that
 is wrong, and the comparison looks decisive either way round.
 
-**Comparing two models needs an autocorrelation-robust variance.** Score
-differences inherit the dependence of the data: under volatility clustering a
-model that is wrong is wrong in runs, so the differences autocorrelate and a
-standard error computed as if they were independent understates the sampling
-error. :func:`compare` uses a Newey-West estimate with the usual bandwidth, and
-the module's tests measure what the naive one leaves out.
+**Comparing two models needs an autocorrelation-robust variance, and it is
+worth less than it sounds.** Score differences inherit the dependence of the
+data, so :func:`compare` uses a Newey-West estimate at the usual bandwidth and
+reports the naive standard error beside it. Measured over four thousand
+observations, comparing two exponentially weighted volatility models against a
+log-volatility process: at zero persistence the robust standard error is
+**0.99** times the naive one — *below* one, which is the Bartlett estimator's
+own finite-sample noise and not a correction — and at persistences of 0.95 and
+0.995 it is **1.10** and **1.06**. The largest effect on a t statistic across
+those runs is -3.53 becoming -3.20.
+
+So the correction is real and modest. It earns its place because its direction
+is not knowable in advance rather than because it is large, and a reader who
+expected the naive standard error to be badly wrong should have the measurement
+rather than the expectation. The ratio is on the result for that reason.
 """
 
 from __future__ import annotations
