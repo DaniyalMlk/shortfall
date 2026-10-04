@@ -13,6 +13,7 @@ import json
 import math
 import random
 from pathlib import Path
+from statistics import NormalDist
 
 import pytest
 
@@ -1193,3 +1194,115 @@ def test_bars_refuses_an_empty_file(tmp_path: Path) -> None:
     path = write(tmp_path / "empty.csv", "\n")
     stream = io.StringIO()
     assert main(["bars", "--bars", str(path)], stream=stream) == 2
+
+
+def two_model_file(path: Path, *, periods: int = 1500) -> Path:
+    """Returns from a persistent volatility process, with two models' forecasts.
+
+    One model smooths at 0.94 and the other at 0.995, so they disagree about
+    the state and their score differences are persistent — which is the case
+    the robust variance exists for.
+    """
+    normal = NormalDist()
+    confidence = 0.975
+    alpha = 1.0 - confidence
+    z = normal.inv_cdf(confidence)
+    rng = random.Random(21)
+    returns: list[float] = []
+    volatilities: list[float] = []
+    state = 0.0
+    for _ in range(periods):
+        state = 0.97 * state + math.sqrt(1.0 - 0.97**2) * rng.gauss(0.0, 0.5)
+        sigma = 0.01 * math.exp(state)
+        volatilities.append(sigma)
+        returns.append(rng.gauss(0.0, sigma))
+
+    def ewma(decay: float) -> list[float]:
+        out: list[float] = []
+        variance = volatilities[0] ** 2
+        for value in returns:
+            out.append(math.sqrt(variance))
+            variance = decay * variance + (1.0 - decay) * value * value
+        return out
+
+    fast, slow = ewma(0.94), ewma(0.995)
+    lines = ["return,var_a,es_a,var_b,es_b"]
+    for value, a, b in zip(returns, fast, slow, strict=True):
+        lines.append(
+            f"{value:.10f},{a * z:.10f},{a * normal.pdf(z) / alpha:.10f},"
+            f"{b * z:.10f},{b * normal.pdf(z) / alpha:.10f}"
+        )
+    return write(path, "\n".join(lines) + "\n")
+
+
+def test_score_ranks_two_models_jointly(tmp_path: Path) -> None:
+    code, text = run(
+        "score",
+        str(two_model_file(tmp_path / "two.csv")),
+        "--es-columns",
+        "es_a",
+        "es_b",
+    )
+    assert code == 0
+    assert "fissler-ziegel" in text
+    assert "Lower score, so better:" in text
+    # Both standard errors are printed, because the gap between them is the
+    # whole reason the bandwidth is there.
+    assert "times the naive" in text
+
+
+def test_score_in_json_carries_both_standard_errors(tmp_path: Path) -> None:
+    code, text = run(
+        "--json",
+        "score",
+        str(two_model_file(tmp_path / "two.csv")),
+        "--es-columns",
+        "es_a",
+        "es_b",
+    )
+    assert code == 0
+    payload = json.loads(text)
+    assert payload["score"] == "fissler-ziegel"
+    assert payload["observations"] == 1500
+    assert payload["better"] in {"var_a", "var_b"}
+    assert payload["robust_over_naive"] > 0.9
+    assert payload["standard_error"] > 0.0
+    assert payload["naive_standard_error"] > 0.0
+    assert len(payload["models"]) == 2
+    # The winner is the one with the lower mean score, by construction.
+    scores = {model["name"]: model["mean_score"] for model in payload["models"]}
+    assert payload["better"] == min(scores, key=lambda name: scores[name])
+
+
+def test_score_falls_back_to_the_pinball_loss(tmp_path: Path) -> None:
+    code, text = run("--json", "score", str(two_model_file(tmp_path / "two.csv")))
+    assert code == 0
+    payload = json.loads(text)
+    assert payload["score"] == "pinball"
+    # Both scores are positive here, where the joint one is negative: the two
+    # are different numbers about different things and the module says so.
+    assert all(model["mean_score"] > 0.0 for model in payload["models"])
+
+
+def test_score_takes_an_explicit_bandwidth(tmp_path: Path) -> None:
+    path = two_model_file(tmp_path / "two.csv")
+    code, text = run("--json", "score", str(path), "--lags", "0")
+    assert code == 0
+    payload = json.loads(text)
+    assert payload["lags"] == 0
+    # No lags means the robust estimate is the naive one.
+    assert payload["standard_error"] == pytest.approx(
+        payload["naive_standard_error"], rel=1e-12
+    )
+
+
+def test_score_names_a_missing_column_and_lists_what_there_is(tmp_path: Path) -> None:
+    path = two_model_file(tmp_path / "two.csv")
+    stream = io.StringIO()
+    code = main(["score", str(path), "--var-columns", "var_a", "nope"], stream=stream)
+    assert code == 2
+
+
+def test_score_refuses_an_impossible_confidence(tmp_path: Path) -> None:
+    path = two_model_file(tmp_path / "two.csv")
+    assert main(["score", str(path), "--confidence", "1.0"], stream=io.StringIO()) == 2

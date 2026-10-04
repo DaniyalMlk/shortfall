@@ -43,6 +43,7 @@ from .historical import historical_risk
 from .horizon import Innovations, horizon_risk
 from .parametric import Distribution, portfolio_risk
 from .realised import BadBar, Bars, Estimator, realised_volatility, tick_bias_factor
+from .scoring import compare, fz0_loss, quantile_loss
 from .series import Panel
 from .volatility import Innovation, fat_tail_test, fit_garch
 
@@ -1335,6 +1336,109 @@ _ASSUMES = {
 }
 
 
+def command_score(arguments: argparse.Namespace, stream: TextIO) -> dict[str, Any]:
+    """Rank two forecast series by a strictly consistent score.
+
+    ``validate`` asks whether one model is adequate. This asks which of two is
+    better, which is a different question and needs a different instrument: a
+    score that is minimised, uniquely, at the truth. Expected shortfall has no
+    such score of its own, so the pair is scored jointly by the
+    Fissler-Ziegel function; dropping the shortfall columns falls back to the
+    pinball loss, which is consistent for the quantile alone.
+
+    The comparison prints both standard errors. The autocorrelation-robust one
+    is what the test uses, and the naive one is beside it because the gap
+    between them is small — measured between 0.99 and 1.10 times — and a
+    reader is entitled to see that rather than take the bandwidth on trust.
+    """
+    parsed = read_table(arguments.forecasts)
+    panel = parsed.panel
+    columns = list(panel.names)
+
+    def column(name: str) -> list[float]:
+        if name not in columns:
+            raise InputError(
+                f"{arguments.forecasts} has no column named {name!r}. It has "
+                f"{', '.join(repr(each) for each in columns)}."
+            )
+        return list(panel[name].values)
+
+    observed = column(arguments.returns_column)
+    joint = arguments.es_columns is not None
+    if joint:
+        first = fz0_loss(
+            observed,
+            column(arguments.var_columns[0]),
+            column(arguments.es_columns[0]),
+            confidence=arguments.confidence,
+        )
+        second = fz0_loss(
+            observed,
+            column(arguments.var_columns[1]),
+            column(arguments.es_columns[1]),
+            confidence=arguments.confidence,
+        )
+    else:
+        first = quantile_loss(
+            observed, column(arguments.var_columns[0]), confidence=arguments.confidence
+        )
+        second = quantile_loss(
+            observed, column(arguments.var_columns[1]), confidence=arguments.confidence
+        )
+
+    result = compare(first, second, lags=arguments.lags)
+    names = (arguments.var_columns[0], arguments.var_columns[1])
+    payload: dict[str, Any] = {
+        "score": first.name,
+        "confidence": arguments.confidence,
+        "observations": result.observations,
+        "models": [
+            {"name": names[0], "mean_score": first.mean},
+            {"name": names[1], "mean_score": second.mean},
+        ],
+        "difference": result.difference,
+        "standard_error": result.standard_error,
+        "naive_standard_error": result.naive_standard_error,
+        "robust_over_naive": (
+            result.standard_error / result.naive_standard_error
+            if result.naive_standard_error > 0.0
+            else float("nan")
+        ),
+        "statistic": result.statistic,
+        "p_value": result.p_value,
+        "lags": result.lags,
+        "better": None if result.better is None else names[result.better - 1],
+    }
+    if arguments.json:
+        return payload
+
+    print(f"score: {first.name} at {arguments.confidence:.4g}", file=stream)
+    print(f"observations: {result.observations}", file=stream)
+    print(f"{'model':>24}{'mean score':>16}", file=stream)
+    print(f"{names[0]:>24}{first.mean:>16.8f}", file=stream)
+    print(f"{names[1]:>24}{second.mean:>16.8f}", file=stream)
+    print(
+        f"difference: {result.difference:+.8f}, standard error {result.standard_error:.8f} "
+        f"at {result.lags} lags ({payload['robust_over_naive']:.4f} times the naive "
+        f"{result.naive_standard_error:.8f})",
+        file=stream,
+    )
+    print(
+        f"Diebold-Mariano: {result.statistic:+.4f}, p = {result.p_value:.4g}", file=stream
+    )
+    if result.better is None:
+        print("The two score identically.", file=stream)
+    else:
+        print(f"Lower score, so better: {names[result.better - 1]}", file=stream)
+    print(
+        "Lower is better for both scores, and two scores from different "
+        "functions are not comparable: the ranking is only meaningful within "
+        "one of them.",
+        file=stream,
+    )
+    return payload
+
+
 COMMANDS = {
     "risk": command_risk,
     "contributions": command_contributions,
@@ -1346,6 +1450,7 @@ COMMANDS = {
     "tail": command_tail,
     "copula": command_copula,
     "bars": command_bars,
+    "score": command_score,
 }
 
 
@@ -1587,6 +1692,50 @@ def build_parser() -> argparse.ArgumentParser:
         help="how many pairs of the tail dependence table to print, worst first",
     )
     dependence.add_argument("--seed", type=int, default=0)
+
+    ranked = subparsers.add_parser(
+        "score",
+        help="rank two forecast series by a strictly consistent score",
+        description=(
+            "'validate' asks whether one model is adequate. This asks which of "
+            "two is better, which needs a scoring function that is minimised at "
+            "the truth rather than a hypothesis test. Expected shortfall has no "
+            "such score of its own, so the pair is scored jointly by the "
+            "Fissler-Ziegel function; with no shortfall columns it falls back "
+            "to the pinball loss, which is consistent for the quantile alone. "
+            "The obvious alternative -- a pinball loss plus a squared error on "
+            "the breaches -- is not consistent, and its optimum sits about a "
+            "third above the truth, which is why it is not offered."
+        ),
+    )
+    ranked.add_argument("forecasts", type=Path, help="CSV of returns and forecasts")
+    ranked.add_argument(
+        "--returns-column", default="return", help="column holding the realised return"
+    )
+    ranked.add_argument(
+        "--var-columns",
+        nargs=2,
+        default=("var_a", "var_b"),
+        metavar=("FIRST", "SECOND"),
+        help="the two value-at-risk columns to compare, as positive losses",
+    )
+    ranked.add_argument(
+        "--es-columns",
+        nargs=2,
+        default=None,
+        metavar=("FIRST", "SECOND"),
+        help=(
+            "the two expected-shortfall columns; omit to score the quantile "
+            "alone with the pinball loss"
+        ),
+    )
+    ranked.add_argument("--confidence", type=float, default=0.975)
+    ranked.add_argument(
+        "--lags",
+        type=int,
+        default=None,
+        help="bandwidth for the long-run variance; the default is the usual rule",
+    )
 
     checked = subparsers.add_parser(
         "validate",
