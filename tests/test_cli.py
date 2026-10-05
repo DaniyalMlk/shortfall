@@ -1306,3 +1306,49 @@ def test_score_names_a_missing_column_and_lists_what_there_is(tmp_path: Path) ->
 def test_score_refuses_an_impossible_confidence(tmp_path: Path) -> None:
     path = two_model_file(tmp_path / "two.csv")
     assert main(["score", str(path), "--confidence", "1.0"], stream=io.StringIO()) == 2
+
+
+def test_expectile_reports_the_three_estimates_and_the_translation(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    code = main(
+        ["expectile", str(sample_file(tmp_path / "r.csv")), "--level", "0.99"],
+        stream=stream,
+    )
+    assert code == 0
+    output = stream.getvalue()
+    assert "sample" in output
+    assert "normal" in output
+    assert "Student-t" in output
+    assert "by construction" in output
+    assert "not transferable" in output
+
+
+def test_expectile_emits_json_with_the_transplant_cost_in_it(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    code = main(
+        ["--json", "expectile", str(sample_file(tmp_path / "r.csv")), "--degrees", "5"],
+        stream=stream,
+    )
+    assert code == 0
+    payload = json.loads(stream.getvalue().split("\n\n")[-1])
+    assert payload["observations"] == 300
+    # The defining condition, carried on the result rather than recomputed.
+    assert abs(payload["identity_residual"]) < 1e-15
+    assert payload["exceedance_ratio"] == pytest.approx(
+        (1.0 - payload["level"]) / payload["level"], rel=1e-9
+    )
+    # The level matched on the normal overstates the fatter-tailed shortfall,
+    # which is the whole reason the command prints it.
+    assert payload["transplant_overstatement"] > 0.1
+    assert payload["matched_level"] > payload["level"]
+    # json.dumps writes bare Infinity and NaN, and json.loads reads them back,
+    # so nothing upstream notices a non-finite number reaching a payload.
+    assert json.dumps(payload, allow_nan=False)
+
+
+def test_expectile_refuses_a_level_outside_the_open_interval(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, _ = run("expectile", str(sample_file(tmp_path / "r.csv")), "--level", "1.0")
+    assert code == 2
+    assert "strictly inside" in capsys.readouterr().err
