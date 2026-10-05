@@ -37,11 +37,17 @@ from .contributions import (
 from .copula import Family, Marginal, copula_risk
 from .covariance import ledoit_wolf, sample_covariance
 from .drawdown import calmar, maximum_drawdown, sortino, ulcer_index
+from .expectile import (
+    matching_level,
+    normal_expectile,
+    sample_expectile,
+    student_t_expectile,
+)
 from .extreme import TailMethod, extreme_risk, mean_excess_curve
 from .factors import attribute_risk, fit_factor_model
 from .historical import historical_risk
 from .horizon import Innovations, horizon_risk
-from .parametric import Distribution, portfolio_risk
+from .parametric import Distribution, normal_risk, portfolio_risk, student_t_risk
 from .realised import BadBar, Bars, Estimator, realised_volatility, tick_bias_factor
 from .scoring import compare, fz0_loss, quantile_loss
 from .series import Panel
@@ -1439,6 +1445,104 @@ def command_score(arguments: argparse.Namespace, stream: TextIO) -> dict[str, An
     return payload
 
 
+def command_expectile(arguments: argparse.Namespace, stream: TextIO) -> dict[str, Any]:
+    """The expectile of a portfolio, and the level that states it in familiar units.
+
+    An expectile level means nothing on its own, so the command spends most of
+    its output on translation: which expected shortfall this expectile equals,
+    and which level would reproduce the expected shortfall the caller asked
+    for. The two are not inverses of each other across distributions, and the
+    table is laid out so that is visible rather than buried — the level matched
+    on the fitted normal is carried over to the fitted Student-t, and the gap
+    is the number worth looking at.
+    """
+    parsed = read_table(arguments.returns)
+    panel = parsed.panel
+    weights = parse_weights(arguments.weights, panel)
+    portfolio = panel.portfolio(weights)
+    # Losses are positive, which is the package's convention everywhere else.
+    losses = [-value for value in portfolio.values]
+    volatility = portfolio.stdev()
+    mean = math.fsum(losses) / len(losses)
+
+    empirical = sample_expectile(losses, arguments.level)
+    assumed = normal_expectile(mean=mean, volatility=volatility, level=arguments.level)
+    heavy = student_t_expectile(
+        mean=mean,
+        volatility=volatility,
+        level=arguments.level,
+        degrees=arguments.degrees,
+    )
+    risk = normal_risk(mean=-mean, volatility=volatility, confidence=arguments.confidence)
+    fat = student_t_risk(
+        mean=-mean,
+        volatility=volatility,
+        confidence=arguments.confidence,
+        degrees=arguments.degrees,
+    )
+    matched = matching_level(
+        risk.expected_shortfall,
+        lambda level: normal_expectile(mean=mean, volatility=volatility, level=level).value,
+    )
+    transplanted = student_t_expectile(
+        mean=mean, volatility=volatility, level=matched.level, degrees=arguments.degrees
+    )
+    payload = {
+        "observations": panel.observations,
+        "level": arguments.level,
+        "confidence": arguments.confidence,
+        "degrees": arguments.degrees,
+        "sample_expectile": empirical.value,
+        "normal_expectile": assumed.value,
+        "student_t_expectile": heavy.value,
+        "exceedance_ratio": empirical.exceedance_ratio,
+        "identity_residual": empirical.identity,
+        "normal_expected_shortfall": risk.expected_shortfall,
+        "student_t_expected_shortfall": fat.expected_shortfall,
+        "matched_level": matched.level,
+        "transplanted_expectile": transplanted.value,
+        "transplant_overstatement": transplanted.value / fat.expected_shortfall - 1.0,
+    }
+    if arguments.json:
+        return payload
+    print(
+        f"{panel.observations} periods, expectile level {arguments.level:.5f}, "
+        f"confidence {arguments.confidence:.1%}\n",
+        file=stream,
+    )
+    table(
+        [
+            ["expectile", "value"],
+            ["sample", percent(empirical.value)],
+            ["normal", percent(assumed.value)],
+            [f"Student-t ({arguments.degrees:g} df)", percent(heavy.value)],
+        ],
+        stream,
+    )
+    print(
+        f"\nThe sample expectile is the point where expected overshoot is "
+        f"{empirical.exceedance_ratio:.4f} times expected undershoot, which is "
+        f"{(1.0 - arguments.level) / arguments.level:.4f} by construction. "
+        f"It is not a quantile and no share of the sample sits beyond it.",
+        file=stream,
+    )
+    print(
+        f"\nLevel {matched.level:.6f} reproduces the {arguments.confidence:.1%} "
+        f"expected shortfall of {percent(risk.expected_shortfall)} under the fitted "
+        f"normal.",
+        file=stream,
+    )
+    print(
+        f"Carried over to the fitted Student-t, that level gives "
+        f"{percent(transplanted.value)} against a true expected shortfall of "
+        f"{percent(fat.expected_shortfall)}: "
+        f"{payload['transplant_overstatement']:+.1%}. An expectile level is not "
+        f"transferable between distributions the way a confidence level is.",
+        file=stream,
+    )
+    return payload
+
+
 COMMANDS = {
     "risk": command_risk,
     "contributions": command_contributions,
@@ -1451,6 +1555,7 @@ COMMANDS = {
     "copula": command_copula,
     "bars": command_bars,
     "score": command_score,
+    "expectile": command_expectile,
 }
 
 
@@ -1777,6 +1882,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     checked.add_argument("--degrees", type=float, default=5.0)
     checked.add_argument("--seed", type=int, default=0)
+    expectile = subparsers.add_parser(
+        "expectile",
+        help="the coherent and elicitable risk measure, and what its level means",
+        description=(
+            "Reports the sample expectile of a portfolio beside the normal and "
+            "Student-t closed forms, translates the level into the expected "
+            "shortfall it reproduces, and then carries that level over to a "
+            "fatter-tailed fit to show what the translation costs. The last "
+            "number is the point: a confidence level means the same thing on "
+            "every book and an expectile level does not."
+        ),
+    )
+    expectile.add_argument("returns", type=Path, help="CSV of returns")
+    expectile.add_argument(
+        "--weights", default=None, help="portfolio weights; equal weights if omitted"
+    )
+    expectile.add_argument(
+        "--level", type=float, default=0.99, help="the expectile level, tau"
+    )
+    expectile.add_argument(
+        "--confidence",
+        type=float,
+        default=0.975,
+        help="the expected-shortfall confidence the level is matched against",
+    )
+    expectile.add_argument("--degrees", type=float, default=5.0)
+
     bars = subparsers.add_parser(
         "bars",
         help="volatility from open, high, low and close",

@@ -580,3 +580,78 @@ effect on a t statistic across those runs is -3.53 becoming -3.20. The
 bandwidth earns its place because its direction is not knowable in advance, not
 because it is large, and `compare` returns both standard errors so a reader can
 see that for themselves.
+
+## Phase 19 — The measure that is both, and what it costs to use it
+
+- [x] The expectile, by the condition that defines it, with both of its partial
+      moments carried on the result
+- [x] An exact sample estimator rather than an iterated one, from the piecewise
+      structure of the sample score
+- [x] The asymmetric squared loss, with consistency checked against the exact
+      expected score
+- [x] Closed forms under a normal and a standardised Student-t
+- [x] The level matching, so an expectile can be stated in units already in use
+- [x] Subadditivity above a half and its failure below, found rather than cited
+- [x] Comonotonic additivity, which expectiles do not have, measured
+- [x] A command-line entry point that translates its own level and prices the
+      translation
+
+Phase 18 ends on a compromise. Value at risk is elicitable and not coherent,
+expected shortfall is coherent and not elicitable, and the package's answer is
+to score the pair jointly. There is a measure that is both: among law-invariant
+risk measures the **expectiles** are the only ones that are coherent and
+elicitable at once, and the score that elicits them is a weighted squared error
+whose first-order condition *is* their definition.
+
+So the interesting work is not building them, which is short. It is answering
+whether they can be used, and that turns out to be an empirical question.
+
+**A level is not transferable, and the gap is not small.** A confidence level
+is fixed once by a rule and means the same thing on every book. An expectile
+level does not, because the same `tau` is a different amount of conservatism on
+a different tail. The `tau` reproducing a 97.5% expected shortfall is
+**0.998603** under a normal and **0.997335** under a standardised Student-t with
+five degrees of freedom — 0.0013 apart, which looks like nothing. Carrying the
+normal's level over to the `t` overstates the true expected shortfall by
+**16.5%**, and by 7.9% at eight degrees of freedom and 2.4% at twenty. The
+error is worst exactly where a tail measure was supposed to help. Recalibrating
+per distribution fixes it and reintroduces the distributional assumption the
+exercise was meant to avoid.
+
+**Coherence stops at a half, and the boundary is exact.** The gap
+`e(X) + e(Y) - e(X + Y)` is exactly zero at `tau = 1/2`, because the
+half-expectile is the mean and the mean is additive. Above a half it is
+positive, below it negative, and the magnitude grows with the distance from a
+half: on one dependence structure, `-0.006` at 0.49, `-0.063` at 0.4, `-0.214`
+at 0.2 and `-0.418` at 0.05. A search over two hundred dependence structures
+found `-2.37` at `tau = 0.02`. Below a half an expectile is not a coherent risk
+measure, and the theorem's boundary is a real edge rather than a technicality.
+
+**And comonotonic additivity is the property given up.** Expected shortfall has
+it: two positions that move together offer no diversification, and it reports
+none, which is what a capital rule wants at the top of the dependence range. An
+expectile reports some anyway. On perfectly dependent data — one position an
+increasing transform of the other — the sum of the expectiles exceeds the
+expectile of the sum by 0.40% at `tau = 0.9`, 0.48% at 0.975, 0.69% at 0.99,
+and exactly zero at a half. That is small enough to argue about rather than
+small enough to ignore, which is the honest summary.
+
+**The estimator is exact, and the test of it found out why that matters.** The
+sample score is piecewise quadratic with a break at every order statistic, so
+its derivative is piecewise linear and the root on each piece is one division;
+scanning the pieces finds the one containing it. The usual implementation
+bisects the same derivative instead. Checking the closed form against an
+independent minimisation of the sample score showed which side of that
+comparison is the imprecise one: the score is quadratic at its minimum, so two
+forecasts a distance `d` apart differ in score by `O(d^2)`, and the search tops
+out around `1e-08` in the argument while the closed form's residual in the
+defining condition is `1e-17`.
+
+Convergence is asserted against the sandwich formula rather than against the
+error getting smaller. The estimating equation gives an asymptotic standard
+error of `1.4285 / sqrt(n)` for a standard normal at `tau = 0.95`, and the root
+mean squared error over independent samples matches it at 500 and 4000
+observations with the bias inside three standard errors of zero. The first
+version of that test reused one seed across sample sizes and read a 1.5-sigma
+draw at the largest as a failure to converge — the same trap as the simulation
+study in phase 15, and now written into the test's own docstring.
