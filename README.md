@@ -1274,6 +1274,55 @@ not knowable in advance, not because it is large.
 shortfall score forecasts.csv --es-columns es_a es_b --confidence 0.975
 ```
 
+## The measure that is both coherent and elicitable
+
+The section above settles for scoring value at risk and expected shortfall
+jointly, because neither can be both scored and trusted on its own. There is a
+measure that can: among law-invariant risk measures the **expectiles** are the
+only ones that are coherent and elicitable at once. The `tau`-expectile is the
+point where the expected overshoot and the expected undershoot stand in the
+ratio `(1 - tau) / tau`, and the score that elicits it is a weighted squared
+error — `|tau - 1{l <= e}| (l - e)^2` — whose first-order condition is that
+definition. At `tau = 1/2` it is the mean.
+
+Building them is short. The question worth answering is whether they can be
+used, and three measurements say what it costs.
+
+**An expectile level is not transferable between distributions.** The `tau`
+reproducing a 97.5% expected shortfall is 0.998603 under a normal and 0.997335
+under a standardised Student-t with five degrees of freedom. That gap of 0.0013
+looks like nothing and is not: carrying the normal's level over to the `t`
+overstates the true expected shortfall by **16.5%**, by 7.9% at eight degrees
+of freedom and by 2.4% at twenty. A confidence level is fixed once by a rule
+and means the same thing on every book. An expectile level has to be
+recalibrated per distribution, and the recalibration reintroduces the
+assumption the measure was supposed to avoid. The `expectile` command prints
+this translation and its cost, because the number is the point.
+
+**Coherence stops exactly at a half.** The subadditivity gap is exactly zero at
+`tau = 1/2` — the half-expectile is the mean and the mean is additive — positive
+above it and negative below, growing with the distance: `-0.006` at 0.49,
+`-0.214` at 0.2, `-0.418` at 0.05 on one dependence structure, and `-2.37` at
+0.02 over a search of two hundred of them.
+
+**Comonotonic additivity is the property given away.** Expected shortfall has
+it, so two positions that move together get no diversification credit. An
+expectile gives some anyway: on perfectly dependent data the sum of the
+expectiles exceeds the expectile of the sum by 0.40% at `tau = 0.9` and 0.69%
+at 0.99.
+
+The sample estimator is exact rather than iterated. The sample score is
+piecewise quadratic with a break at every order statistic, so its derivative is
+piecewise linear and the root on each piece is a division. Checking it against
+an independent minimisation of the same score showed which side of that
+comparison is imprecise: a quadratic minimum means two forecasts a distance `d`
+apart differ in score by `O(d^2)`, so the search tops out near `1e-08` in the
+argument while the closed form's residual in the defining condition is `1e-17`.
+
+```bash
+shortfall expectile returns.csv --level 0.99 --confidence 0.975
+```
+
 ## Development
 
 ```bash
