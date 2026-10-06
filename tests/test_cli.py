@@ -1352,3 +1352,100 @@ def test_expectile_refuses_a_level_outside_the_open_interval(
     code, _ = run("expectile", str(sample_file(tmp_path / "r.csv")), "--level", "1.0")
     assert code == 2
     assert "strictly inside" in capsys.readouterr().err
+
+
+# -- spectrum ----------------------------------------------------------------
+
+
+def test_spectrum_matches_every_row_to_one_charge(tmp_path: Path) -> None:
+    """The matching is the report: the headline figure is identical in each row."""
+    stream = io.StringIO()
+    code = main(
+        ["--json", "spectrum", str(sample_file(tmp_path / "r.csv", periods=2000))],
+        stream=stream,
+    )
+    assert code == 0
+    payload = json.loads(stream.getvalue().split("\n\n")[-1])
+    charges = [row["charge"] for row in payload["spectra"]]
+    assert len(charges) == 4
+    for charge in charges[1:]:
+        assert charge == pytest.approx(charges[0], rel=1e-6)
+    # And they do not all agree about where it came from.
+    shares = [row["deep_tail_share"] for row in payload["spectra"]]
+    assert max(shares) > 1.3 * min(shares)
+    assert all(row["is_coherent"] for row in payload["spectra"])
+    assert all(row["subadditive"] for row in payload["spectra"])
+    assert all(abs(row["comonotonic_gap"]) < 1e-12 for row in payload["spectra"])
+
+
+def test_spectrum_says_where_the_spectra_stop_agreeing(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    code = main(
+        ["spectrum", str(sample_file(tmp_path / "r.csv", periods=2000))], stream=stream
+    )
+    assert code == 0
+    output = stream.getvalue()
+    assert "matched to the" in output
+    assert "Wang transform" in output
+    assert "proportional hazards" in output
+    assert "same number in every row" in output
+    assert "comonotonically additive" in output
+
+
+def test_spectrum_reports_a_non_coherent_spectrum_as_one(tmp_path: Path) -> None:
+    """Asked for an increasing weight function, it prices it and says it fails."""
+    stream = io.StringIO()
+    code = main(
+        [
+            "spectrum",
+            str(sample_file(tmp_path / "r.csv", periods=2000)),
+            "--exponent",
+            "0.4",
+        ],
+        stream=stream,
+    )
+    assert code == 0
+    output = stream.getvalue()
+    assert "is not coherent" in output
+    assert "fails subadditivity" in output
+    assert "NO" in output
+
+
+def test_spectrum_json_carries_the_coherence_verdict(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    code = main(
+        [
+            "--json",
+            "spectrum",
+            str(sample_file(tmp_path / "r.csv", periods=2000)),
+            "--exponent",
+            "0.4",
+        ],
+        stream=stream,
+    )
+    assert code == 0
+    payload = json.loads(stream.getvalue().split("\n\n")[-1])
+    offender = payload["spectra"][-1]
+    assert offender["is_coherent"] is False
+    assert offender["subadditive"] is False
+    assert offender["subadditivity_gap"] > 0.0
+    # The coherent rows are unaffected by its presence.
+    assert all(row["subadditive"] for row in payload["spectra"][:-1])
+
+
+def test_spectrum_reports_the_wang_shift_matching_the_normal(tmp_path: Path) -> None:
+    """So the spectrum can be stated in units a desk already uses."""
+    stream = io.StringIO()
+    code = main(
+        [
+            "--json",
+            "spectrum",
+            str(sample_file(tmp_path / "r.csv", periods=2000)),
+            "--confidence",
+            "0.975",
+        ],
+        stream=stream,
+    )
+    assert code == 0
+    payload = json.loads(stream.getvalue().split("\n\n")[-1])
+    assert 1.5 < payload["wang_shift_matching_normal"] < 3.5
