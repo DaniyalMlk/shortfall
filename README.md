@@ -1323,11 +1323,110 @@ argument while the closed form's residual in the defining condition is `1e-17`.
 shortfall expectile returns.csv --level 0.99 --confidence 0.975
 ```
 
+## Weighting the whole tail instead of averaging a slice of it
+
+Expected shortfall averages the worst `p` of the distribution, which weights
+every loss inside that slice equally and every loss outside it at nothing. Both
+halves of that are choices nobody made deliberately: a loss at the 0.1% level
+and one at the 2.4% level enter a 2.5% expected shortfall with the same weight,
+and a loss at 2.6% does not enter at all.
+
+`shortfall.spectral` replaces the slice with a weight function.
+
+```
+rho(X) = integral over u in [0, 1] of phi(u) q_u(X) du
+```
+
+`phi` is non-negative and integrates to one, and the measure is **coherent
+exactly when `phi` is non-increasing** — the weight has to fall as the outcome
+improves. Expected shortfall is the single-step case, which is the whole of why
+it is coherent; value at risk is the point-mass limit, which is the whole of
+why it is not.
+
+```bash
+shortfall spectrum returns.csv --confidence 0.975 --deep 0.005
+```
+
+### Four identities, none of them checked against a number this module made
+
+The **shortfall spectrum reproduces `sample_expected_shortfall` to 3.5e-18**.
+That existing estimator averages the worst `n p` observations with a partial
+one at the edge, by hand; this one integrates a step spectrum against the
+empirical quantile. They are unrelated derivations of the same sum.
+
+A **discrete mixture of expected shortfalls equals the step spectrum's
+measure, to 6.3e-17** — Kusuoka's representation in the one form that can be
+checked against arithmetic rather than against a quadrature.
+
+The **Wang transform has a closed form under a normal**: `mean - shift *
+volatility`, exactly, for every shift. Nothing from this module appears in that
+statement, so it is what validates the quadrature and the block masses
+together.
+
+And **comonotonic additivity holds to rounding**. Every distortion measure is
+additive on positions that move together, so two perfectly dependent books get
+no diversification credit — which is what a capital rule wants at the top of
+the dependence range. On the same comonotonic data the spectra report a gap of
+at most **8.6e-15 relative** and an expectile reports **4.3e-04**: eleven
+orders of magnitude apart. That is the property expectiles buy elicitability
+with, and it is not given up here.
+
+### Two measures agreeing on the headline can disagree by a factor of two
+
+On a Student-t with five degrees of freedom scaled to a 1% daily volatility,
+the 97.5% expected shortfall is 2.714%. Matching every spectrum to that same
+charge — so a reader given only the number could not tell them apart — the
+share of it contributed by the worst 0.5% of outcomes is:
+
+| spectrum | charge | from the worst 0.5% |
+| --- | --- | --- |
+| expected shortfall | 2.717% | 29.2% |
+| proportional hazards | 2.717% | 37.8% |
+| exponential | 2.717% | 38.0% |
+| Wang transform | 2.717% | 59.7% |
+
+The Wang transform carries **twice as much of an identical headline figure** in
+the part of the tail a sample has least to say about. That is the argument for
+stating a spectrum rather than a confidence level.
+
+### Coherence is shown, not cited
+
+The proportional-hazards family is increasing below an exponent of one, so it is
+not coherent there, and the branch is implemented rather than refused. Over two
+hundred ordinary paired samples — Gaussian and cubed-Gaussian marginals,
+correlations across the whole range — it violates subadditivity on **200 of
+200** at every exponent below one, by up to 97% of the measure itself. At an
+exponent of exactly one the gap is **exactly 0.0**, because the measure is the
+mean and the mean is additive, and above one there are no violations. A reader
+can be told that coherence needs a non-increasing spectrum, or shown what
+happens without one on data that was not built to break it.
+
+### The quadrature was wrong twice, the same way twice
+
+The integral under a normal is a composite Gauss-Legendre rule, and the
+shortfall comparison above found both failures.
+
+A Gauss rule integrates a polynomial exactly and a jump not at all. The
+shortfall spectrum steps from `1/p` to zero at `u = p`, and with that step
+straddling a panel the 97.5% figure came out **1.7e-03 relative** from the
+closed form and the 99% one **5.3e-03** — twenty basis points of risk on a two
+and a half per cent number. Every spectrum now reports its own discontinuities
+and they are forced onto panel edges.
+
+Then the endpoint grading, halving inwards from 0.25 thirty times, left the
+innermost edge at 2.3e-10 and cost **2.0e-07 relative** on a 99.5% shortfall.
+That residual is the truncated sliver times `1/p`, so the error *grew as the
+tail got thinner* — the wrong way round for a tail measure. Sixty halvings
+instead, each one more panel, and every spectrum with a closed form agrees with
+it to **6.7e-16**. The shortfall spectrum is deliberately not special-cased in
+`normal_spectral`, because that comparison is the only check on the quadrature
+and the other spectra inherit it.
+
 ## Development
 
 ```bash
 pip install -e ".[dev]"
-pytest          # 708 tests
+pytest          # 1542 tests
 mypy --strict
 ruff check .
 ```

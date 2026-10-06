@@ -19,7 +19,7 @@ import csv
 import json
 import math
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
@@ -51,6 +51,18 @@ from .parametric import Distribution, normal_risk, portfolio_risk, student_t_ris
 from .realised import BadBar, Bars, Estimator, realised_volatility, tick_bias_factor
 from .scoring import compare, fz0_loss, quantile_loss
 from .series import Panel
+from .spectral import (
+    ExponentialSpectrum,
+    PowerSpectrum,
+    ShortfallSpectrum,
+    Spectrum,
+    WangSpectrum,
+    check_coherence,
+    matching_shift,
+    normal_spectral,
+    spectral_risk,
+    tail_share,
+)
 from .volatility import Innovation, fat_tail_test, fit_garch
 
 
@@ -1543,6 +1555,152 @@ def command_expectile(arguments: argparse.Namespace, stream: TextIO) -> dict[str
     return payload
 
 
+def command_spectrum(arguments: argparse.Namespace, stream: TextIO) -> dict[str, Any]:
+    """Several spectra matched to one headline charge, and where each puts it.
+
+    The matching is the whole report. Every spectrum below is tuned so that its
+    charge equals the expected shortfall at the requested confidence, so a
+    reader given only that number could not tell them apart. The column that
+    distinguishes them is the share of the charge coming from the worst
+    ``--deep`` of outcomes, and on a fat-tailed sample it runs by a factor of
+    two across spectra that agree on everything a committee sees.
+
+    The coherence column is there because coherence is a property of the weight
+    function rather than of the construction. The power spectrum below an
+    exponent of one is included when asked for, reports itself non-coherent,
+    and its subadditivity gap on the data is printed beside it.
+    """
+    parsed = read_table(arguments.returns)
+    panel = parsed.panel
+    weights = parse_weights(arguments.weights, panel)
+    portfolio = panel.portfolio(weights)
+    returns = list(portfolio.values)
+    probability = 1.0 - arguments.confidence
+    volatility = portfolio.stdev()
+    mean = math.fsum(returns) / len(returns)
+
+    reference = ShortfallSpectrum(probability)
+    target = tail_share(returns, reference, arguments.deep)
+
+    def matched(
+        build: Callable[[float], Spectrum], low: float, high: float
+    ) -> Spectrum:
+        """Bisect a family's own parameter onto the shortfall charge.
+
+        Each family is monotone in its parameter, which the tests assert, so a
+        bisection is the whole of it and there is no bracket to search for --
+        unlike the cap-volatility fit in a sibling package, where the price was
+        not monotone and a bisection reported success on the wrong branch.
+        """
+        for _ in range(100):
+            middle = 0.5 * (low + high)
+            if tail_share(returns, build(middle), arguments.deep).charge < target.charge:
+                low = middle
+            else:
+                high = middle
+        return build(0.5 * (low + high))
+
+    families: list[tuple[str, Spectrum]] = [
+        (reference.name, reference),
+        ("Wang transform", matched(WangSpectrum, 0.01, 8.0)),
+        ("exponential", matched(ExponentialSpectrum, 0.1, 600.0)),
+        ("proportional hazards", matched(PowerSpectrum, 1.0, 600.0)),
+    ]
+    if arguments.exponent is not None:
+        families.append(
+            (f"power at exponent {arguments.exponent:g}", PowerSpectrum(arguments.exponent))
+        )
+
+    half = len(returns) // 2
+    rows: list[dict[str, Any]] = []
+    for label, spectrum in families:
+        split = tail_share(returns, spectrum, arguments.deep)
+        coherence = check_coherence(returns[:half], returns[half : 2 * half], spectrum)
+        rows.append(
+            {
+                "spectrum": label,
+                "name": spectrum.name,
+                "charge": split.charge,
+                "deep_tail_share": split.share,
+                "is_coherent": spectrum.is_coherent,
+                "subadditivity_gap": coherence.subadditivity,
+                "subadditive": coherence.subadditive,
+                "comonotonic_gap": coherence.comonotonic,
+                "sample": spectral_risk(returns, spectrum),
+                "normal": normal_spectral(
+                    mean=mean, volatility=volatility, spectrum=spectrum
+                ),
+            }
+        )
+
+    payload = {
+        "observations": panel.observations,
+        "confidence": arguments.confidence,
+        "deep": arguments.deep,
+        "expected_shortfall": -target.quantile,
+        "matched_charge": target.charge,
+        "wang_shift_matching_normal": matching_shift(
+            normal_spectral(mean=mean, volatility=volatility, spectrum=reference),
+            mean=mean,
+            volatility=volatility,
+        ),
+        "spectra": rows,
+    }
+    if arguments.json:
+        return payload
+
+    print(
+        f"{panel.observations} periods, every spectrum matched to the "
+        f"{arguments.confidence:.1%} expected-shortfall charge of "
+        f"{percent(target.charge)}\n",
+        file=stream,
+    )
+    table(
+        [
+            ["spectrum", "charge", f"worst {arguments.deep:.1%}", "coherent", "subadd gap"],
+            *[
+                [
+                    str(row["spectrum"]),
+                    percent(float(row["charge"])),
+                    f"{float(row['deep_tail_share']):.1%}",
+                    "yes" if row["is_coherent"] else "NO",
+                    f"{float(row['subadditivity_gap']):+.2e}",
+                ]
+                for row in rows
+            ],
+        ],
+        stream,
+    )
+    shares = [float(row["deep_tail_share"]) for row in rows if row["is_coherent"]]
+    if shares and min(shares) > 0.0:
+        print(
+            f"\nThe charge is the same number in every row. The share of it "
+            f"coming from the worst {arguments.deep:.1%} of outcomes runs from "
+            f"{min(shares):.1%} to {max(shares):.1%} — a factor of "
+            f"{max(shares) / min(shares):.2f}. Two measures agreeing on the "
+            "figure a committee sees can disagree by that much about where it "
+            "came from, which is the argument for stating a spectrum rather "
+            "than a confidence level.",
+            file=stream,
+        )
+    offenders = [row for row in rows if not row["is_coherent"]]
+    for row in offenders:
+        print(
+            f"\n{row['spectrum']} is not coherent: its weight function rises "
+            f"with the outcome, and on this sample it fails subadditivity by "
+            f"{float(row['subadditivity_gap']):+.4e}. Coherence is a property "
+            "of the weight function, not of the construction.",
+            file=stream,
+        )
+    print(
+        "\nEvery coherent spectrum here is comonotonically additive to "
+        f"{max(abs(float(row['comonotonic_gap'])) for row in rows):.1e}, which "
+        "is the property expectiles give up for elicitability.",
+        file=stream,
+    )
+    return payload
+
+
 COMMANDS = {
     "risk": command_risk,
     "contributions": command_contributions,
@@ -1556,6 +1714,7 @@ COMMANDS = {
     "bars": command_bars,
     "score": command_score,
     "expectile": command_expectile,
+    "spectrum": command_spectrum,
 }
 
 
@@ -1908,6 +2067,47 @@ def build_parser() -> argparse.ArgumentParser:
         help="the expected-shortfall confidence the level is matched against",
     )
     expectile.add_argument("--degrees", type=float, default=5.0)
+
+    spectrum = subparsers.add_parser(
+        "spectrum",
+        help="several spectra matched to one charge, and where each puts the risk",
+        description=(
+            "Expected shortfall weights every loss inside its slice equally and "
+            "everything outside it at nothing. A spectral risk measure replaces "
+            "the slice with a weight function, and is coherent exactly when "
+            "that function is non-increasing. This matches a Wang transform, an "
+            "exponential spectrum and a proportional-hazards spectrum to the "
+            "same expected-shortfall charge, so every row is the same headline "
+            "number, and then reports the share of it coming from the far tail "
+            "-- which is where they stop agreeing. Pass --exponent below one to "
+            "include a spectrum that is not coherent and see it fail."
+        ),
+    )
+    spectrum.add_argument("returns", type=Path, help="CSV of returns")
+    spectrum.add_argument(
+        "--weights", default=None, help="portfolio weights; equal weights if omitted"
+    )
+    spectrum.add_argument(
+        "--confidence",
+        type=float,
+        default=0.975,
+        help="the expected-shortfall confidence every spectrum is matched to",
+    )
+    spectrum.add_argument(
+        "--deep",
+        type=float,
+        default=0.005,
+        help="the cut-off defining the far tail, as a probability",
+    )
+    spectrum.add_argument(
+        "--exponent",
+        type=float,
+        default=None,
+        help=(
+            "also price a power spectrum at this exponent; below one it is not "
+            "coherent and the report says so"
+        ),
+    )
 
     bars = subparsers.add_parser(
         "bars",
