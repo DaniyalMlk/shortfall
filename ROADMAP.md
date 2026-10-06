@@ -655,3 +655,89 @@ observations with the bias inside three standard errors of zero. The first
 version of that test reused one seed across sample sizes and read a 1.5-sigma
 draw at the largest as a failure to converge — the same trap as the simulation
 study in phase 15, and now written into the test's own docstring.
+
+## Phase 20 — Weighting the whole tail, not averaging a slice of it
+
+- [x] A spectrum as a first-class object, with its density, its block masses in
+      closed form and its own discontinuities reported
+- [x] The shortfall, exponential, proportional-hazards and Wang spectra, plus an
+      explicit mixture of shortfall spectra
+- [x] The sample estimator as a finite weighted sum with no approximation in it
+- [x] The split of a charge into the far tail and the rest, so two matched
+      spectra can be told apart
+- [x] Subadditivity and comonotonic additivity on the data, with the
+      non-coherent branch implemented and its failure measured
+- [x] Closed forms under a normal, with the Wang transform exact
+- [x] A command-line entry point that matches several spectra to one charge
+
+Expected shortfall weights every loss inside its slice equally and everything
+outside it at nothing. Both halves of that are choices nobody made
+deliberately. A spectral measure replaces the slice with a weight function, and
+coherence becomes a property of that function — non-increasing — rather than of
+the construction. Expected shortfall is the single-step case, which is the whole
+of why it is coherent; value at risk is the point-mass limit, which is the whole
+of why it is not.
+
+**Four identities, and none is checked against a figure this module produced.**
+The shortfall spectrum reproduces `historical.sample_expected_shortfall` to
+**3.5e-18** — that estimator averages the worst `n p` observations with a
+partial one at the edge, by hand, and this one integrates a step spectrum
+against the empirical quantile, so they are unrelated derivations of the same
+sum. A discrete mixture of expected shortfalls equals the step spectrum's
+measure to **6.3e-17**, which is Kusuoka's representation in the one form
+checkable against arithmetic instead of against a quadrature. The Wang
+transform's measure of a normal is `mean - shift * volatility` **exactly**, for
+every shift, with nothing from this module in the statement. And comonotonic
+additivity holds to rounding.
+
+**That last one is the contrast with Phase 19.** Every distortion measure is
+additive on positions that move together, so two perfectly dependent books get
+no diversification credit, which is what a capital rule wants at the top of the
+dependence range. On the same comonotonic data the spectra here report a gap of
+at most **8.6e-15 relative** against the expectile's **4.3e-04** — eleven orders
+of magnitude. Phase 19's answer to "can expectiles be used" was that the level
+does not transfer; this is the other half of the bill.
+
+**Two measures agreeing on the headline can disagree by a factor of two about
+where it came from.** Matching each spectrum to the 97.5% expected-shortfall
+charge on a `t(5)` scaled to a 1% daily volatility — so every row is the same
+number a committee would see — the share contributed by the worst 0.5% of
+outcomes is **29.2% under expected shortfall, 37.8% under proportional hazards,
+38.0% under the exponential spectrum and 59.7% under the Wang transform**. The
+Wang transform carries twice as much of an identical figure in the part of the
+tail a sample has least to say about. That is the argument for stating a
+spectrum rather than a confidence level.
+
+**Coherence is shown rather than cited.** The proportional-hazards family is
+increasing below an exponent of one, and the branch is implemented instead of
+refused: over two hundred ordinary paired samples it violates subadditivity on
+**200 of 200** at every exponent below one, by up to 97% of the measure. At an
+exponent of exactly one the gap is **exactly 0.0** — the measure is the mean and
+the mean is additive — and above one there are no violations at all. A reader
+can be told the rule or shown the failure on data that was not built to produce
+it.
+
+**The quadrature under a normal was wrong twice, the same way twice, and the
+shortfall comparison found both.** A Gauss rule integrates a polynomial exactly
+and a jump not at all. The shortfall spectrum steps at `u = p`, and with the
+step straddling a panel the 97.5% figure came out **1.7e-03 relative** from the
+closed form and the 99% one **5.3e-03**, which is twenty basis points of risk on
+a two and a half per cent number. Every spectrum therefore reports its own
+discontinuities and they are forced onto panel edges — the same requirement, and
+the same size of failure, as putting a payoff kink on a grid node. Then the
+endpoint grading left the innermost edge at 2.3e-10 and cost **2.0e-07** on a
+99.5% shortfall: the truncated sliver times `1/p`, so the error grew as the tail
+thinned, which is the wrong way round for a tail measure. Sixty halvings instead
+and the agreement is **6.7e-16**. The shortfall spectrum is deliberately not
+special-cased in `normal_spectral`, because that comparison is the only check on
+the quadrature and the other spectra inherit it.
+
+One test defect of my own, fixed rather than loosened. The Wang estimator's
+convergence was first asserted as one draw per sample size getting smaller, and
+it does not reliably: the 2,000-observation draw came in at 2.3e-05 and the
+32,000 one at 1.0e-04. That is one lucky sample, not a failure to converge, and
+a single-draw comparison is a coin flip dressed as a convergence test. It now
+asserts the root-mean-square error over twelve independent samples against the
+predicted root-`n` rate. This trap has now appeared in five consecutive phases
+and the rule that stops it is the same every time: independent seeds per row,
+and a derived prediction rather than "it got smaller".
