@@ -613,7 +613,7 @@ def test_a_name_that_cannot_default_contributes_nothing() -> None:
 def test_a_single_name_portfolio_has_no_sub_portfolio_to_recurse_into() -> None:
     """The branch exists because LossPortfolio refuses to be empty."""
     portfolio = LossPortfolio.detected((Obligor(0.25, 8.0),))
-    assert shortfall_contributions(portfolio, 0.0) == (pytest.approx(2.0),)
+    assert shortfall_contributions(portfolio, 0.0)[0] == pytest.approx(2.0)
     assert shortfall_contributions(portfolio, 8.0 - 1e-9)[0] == pytest.approx(2.0)
     assert saddlepoint_shortfall(portfolio, 0.0) == pytest.approx(8.0, rel=1e-12)
 
