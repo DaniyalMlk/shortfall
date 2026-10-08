@@ -1422,6 +1422,95 @@ it to **6.7e-16**. The shortfall spectrum is deliberately not special-cased in
 `normal_spectral`, because that comparison is the only check on the quadrature
 and the other spectra inherit it.
 
+## The tail of a sum, from the structure rather than the history
+
+Every estimator above reads a distribution that is assumed, resampled, or
+fitted at the extreme. `shortfall.saddlepoint` uses the one piece of structure
+a portfolio actually has: the loss is a **sum**, whose cumulant generating
+function is the sum of the obligors' and is closed form even where the density
+is not. Tilting that to put the mean on the loss level of interest moves the
+expansion point with the question instead of leaving it at the centre.
+
+```bash
+shortfall portfolio book.csv --top 5
+```
+
+```
+100 obligors, mean loss 35.8427, volatility 20.6827, maximum 948.0000
+lattice span 1, so the exact distribution is a convolution and the errors below are measured
+
+loss         exact   saddlepoint        err        normal        err
+----  ------------  ------------  ---------  ------------  ---------
+36    4.453795e-01  4.454120e-01  +7.31e-05  4.969663e-01  +1.16e-01
+54    1.792587e-01  1.793490e-01  +5.04e-04  1.899995e-01  +5.99e-02
+72    5.334832e-02  5.337284e-02  +4.60e-04  4.021541e-02  -2.46e-01
+108   2.205403e-03  2.206045e-03  +2.91e-04  2.426159e-04  -8.90e-01
+143   4.426077e-05  4.426917e-05  +1.90e-04  1.103398e-07  -9.98e-01
+```
+
+The exact column is the point. Whenever the exposures share a common unit the
+loss distribution is a finite convolution, so the approximation's error is
+*measured* against something containing nothing of it — no tilt, no expansion,
+no normal distribution function. Across exceedance levels from 1e-02 to 1e-06
+the saddlepoint is high by 3.3e-04 falling to 1.1e-04, while a normal with the
+same first two moments is low by 69% rising to 99.99%. The saddlepoint's error
+shrinks into the tail; the normal's grows to everything.
+
+**And the normal approximation is not a deep-tail caveat.** It first errs by
+more than ten per cent at an exceedance of 0.46 — essentially at the mean,
+because the portfolio is skewed and a normal is not. The saddlepoint is worst
+in the *body*, at 5.9e-03 where the exceedance is 0.975.
+
+### Three things that are not the formula
+
+**The lattice correction is not a refinement.** Integer exposures leave the
+loss with no density at all, and the continuous form reads 4.7% to 7.2% high —
+*growing* into the tail, which is the shape of failure the method exists to
+avoid. Correcting it is worth a factor of 150 at a one-in-a-hundred loss and
+700 at a one-in-a-million one.
+
+Detecting the span needed a decision. **Every double is a dyadic rational**, so
+"is this lattice-valued" asked exactly has the answer "always" and returns a
+useless span near 1e-16 for an exposure of pi. The question needs a resolution,
+so the denominator is capped: 0.25 and 0.1 come back as 0.05 exactly, pi comes
+back as no lattice at all.
+
+**The shortfall comes from an exact decomposition, not a second expansion.**
+`E[L 1{L>x}] = sum_i e_i p_i P(L^(i) > x - e_i)` — conditioning on one obligor
+defaulting replaces its loss by a constant and leaves the rest independent of
+it. So the only approximation is the same tail probability as the total, the
+per-obligor contributions a desk asks for fall out for free, and the result is
+an order *more* accurate than the probability it divides by. It also hands over
+two exact identities: the contributions at a zero level sum to the mean to
+1e-14, and at any level they sum to the numerator of the conditional mean.
+
+**The singularity at the mean is removable and the branch cannot be on a
+zero.** `w` is a difference of two nearly equal quantities under a square root,
+so the generic form loses digits to cancellation long before the saddlepoint
+reaches zero, while the limiting form's error shrinks linearly in the tilt. The
+gap between them runs 8.2e-02, 8.0e-03, 8.0e-04, 8.0e-05, 7.6e-06 as the tilt
+goes 1e-02 to 1e-06, then **rises** to 2.8e-03, 1.14 and 96.0 by 1e-10. The
+floor sits at the last clean decade.
+
+### It is not a distribution, and what that means had to be measured
+
+On a hundred names the approximation stays inside `[0, 1]` to within 6.1e-18
+and is non-monotone at nine of nine hundred lattice points, all at tail
+probabilities below 4e-16 — round-off, not a failure, and saying so needs the
+measurement. Two names at a 400-to-1 exposure ratio *is* a failure: the raw
+value runs from -3.15 to 4.15, the sequence is not monotone, and the worst
+relative error is 300%. There is no asymptotic regime with two summands, so the
+result carries a flag rather than only a number.
+
+### The sign the exact reference caught
+
+Lugannani and Rice state the approximation for the *distribution* function, so
+the correction enters the tail with a minus. With it the wrong way round the
+answer is still plausible and still monotone, and reads 14% high at the mean
+rising to 65% in the tail — an error growing as the tail thins, which is exactly
+the shape of failure the saddlepoint exists to avoid. It cannot be told from a
+method that simply does not work, except against something exact.
+
 ## Development
 
 ```bash
