@@ -741,3 +741,112 @@ asserts the root-mean-square error over twelve independent samples against the
 predicted root-`n` rate. This trap has now appeared in five consecutive phases
 and the rule that stops it is the same every time: independent seeds per row,
 and a derived prediction rather than "it got smaller".
+
+## Phase 21 — The tail of a sum, from the structure rather than the history
+
+- [x] An obligor type and a portfolio of them, validated
+- [x] The cumulant generating function and its first three derivatives in
+      closed form, with the tilted probability written so a large tilt
+      saturates instead of overflowing
+- [x] The lattice span of the exposures detected by exact rational arithmetic,
+      with a stated resolution
+- [x] The saddlepoint solved on a bracket, using the fact that the first
+      derivative is increasing
+- [x] Lugannani-Rice tail probabilities, with the lattice correction
+- [x] The limiting form at the mean, over a neighbourhood whose width is
+      measured rather than chosen
+- [x] An expected shortfall from an exact decomposition over obligors, and the
+      per-name contributions it hands over for free
+- [x] The exact distribution by convolution on the lattice, as the reference
+- [x] The error measured against it across the tail, and against a normal
+      approximation
+- [x] Where the approximation leaves `[0, 1]` or loses monotonicity, measured
+- [x] A command-line entry point printing the exact column beside the
+      approximate one
+
+Every tail measure before this one reads a distribution that is assumed, from
+`parametric`, resampled, from `historical`, or fitted at the extreme, from
+`extreme`. None of them uses the fact that a portfolio loss is a **sum**, whose
+cumulant generating function is the sum of the obligors' and is closed form even
+where the density is not.
+
+Tilting the distribution to put its mean on the loss level of interest moves the
+expansion point with the question instead of leaving it at the centre, which is
+why the relative error stays bounded as the tail thins. On a hundred names with
+default probabilities from 0.49% to 7.72% and integer exposures from 1 to 20,
+measured against an exact convolution: the saddlepoint is high by 3.3e-04,
+2.5e-04, 2.0e-04, 1.6e-04 and 1.1e-04 at exceedance levels of 1e-02 down to
+1e-06, while a normal with the same first two moments is **low by 69%, 94%,
+99.45%, 99.96% and 99.99%**. The saddlepoint's error shrinks into the tail and
+the normal's grows to everything.
+
+**And the normal approximation is not a deep-tail caveat.** It first errs by
+more than ten per cent at an exceedance of **0.46** — essentially at the mean,
+because the portfolio is skewed and a normal is not. The saddlepoint, by
+contrast, is worst in the *body*: its largest relative error over the whole
+lattice is 5.9e-03, at an exceedance of 0.975.
+
+### Three things that are not the formula
+
+**The lattice correction is not a refinement.** Exposures sharing a common unit
+leave the loss with no density at all, and the continuous form of the formula
+applied to it reads 4.7% to 7.2% high across those same levels — *growing* into
+the tail, which is the shape of failure the method exists to avoid. Correcting
+it is worth a factor of 150 at a one-in-a-hundred loss and 700 at a
+one-in-a-million one. The correction replaces `t sqrt(K'')` by
+`(2/d) sinh(td/2) sqrt(K'')` and solves at the midpoint, and the continuous form
+is the limit of that as the span goes to zero rather than a separate branch.
+
+Detecting the span needed a decision that was not obvious. **Every double is a
+dyadic rational**, so "is this lattice-valued" asked exactly has the answer
+"always" and returns a useless span near 1e-16 for an exposure of pi. The
+question needs a resolution, so the denominator is capped at 1024 — exposures of
+0.25 and 0.1 come back as 0.05 exactly, and pi comes back as no lattice at all.
+
+**The shortfall comes from an exact decomposition, not a second expansion.**
+`E[L 1{L>x}] = sum_i e_i p_i P(L^(i) > x - e_i)`, because conditioning on one
+obligor defaulting replaces its contribution by a constant and leaves the rest
+independent of it. So the only approximation is the same tail probability as the
+total, the two cannot drift apart, the per-obligor contributions a desk asks for
+fall out for free, and the result is an order *more* accurate than the
+probability it divides by — within 1.2e-04 at a loss of 40 and 4.3e-05 at 120.
+It also gives two exact identities to check against: the contributions at a zero
+level sum to the mean to 1e-14, and at any level they sum to the numerator of the
+conditional mean.
+
+**The singularity at the mean is removable and the branch cannot be on a
+zero.** `w` is a difference of two nearly equal quantities under a square root,
+so the generic form loses digits to cancellation long before the saddlepoint is
+exactly zero, while the limiting form's own error shrinks linearly in the tilt.
+Swept: the gap between the two runs 8.2e-02, 8.0e-03, 8.0e-04, 8.0e-05, 7.6e-06
+as the tilt goes 1e-02 to 1e-06 — the limit's error, falling — and then **rises**
+to 4.1e-06, 2.8e-03, 1.14 and 96.0 at 1e-07 through 1e-10, which is the
+cancellation taking over. The floor sits at 1e-06, the last decade in which the
+generic form is still clean.
+
+### It is not a distribution, and what that means had to be measured
+
+Nothing in the expansion is monotone and nothing keeps it inside `[0, 1]`. On
+the hundred-name portfolio it stays inside to within 6.1e-18 and is
+non-monotone at nine of nine hundred lattice points, every one at a tail
+probability below 4e-16 — round-off, not a failure of the method, and saying so
+needs the measurement. Two names with a 400-to-1 exposure ratio *is* a failure
+of the method: the raw value runs from **-3.15 to 4.15**, the sequence is not
+monotone, and the worst relative error is **300%**. There is no asymptotic regime
+with two summands, and the result carries a flag rather than only a number.
+
+### One sign, and one convention
+
+The correction enters the tail with a minus, because Lugannani and Rice state
+the approximation for the *distribution* function. With it the wrong way round
+the answer is still plausible and still monotone, and reads 14% high at the mean
+rising to 65% in the tail — an error that grows as the tail thins, which is
+exactly the shape of failure the saddlepoint exists to avoid, so it cannot be
+told from a method that simply does not work. Only the exact reference
+distinguishes the two.
+
+And `distributions.binomial_sf` is `P(X >= k)` where this module's tail is
+`P(L > x)`. Compared without the shift, the convolution and the survival
+function disagree by 0.10 at the median of a binomial — which reads as a
+catastrophic accuracy failure and is a convention. The convolution is exact to
+1.1e-16 against integer arithmetic; it was never the suspect.
