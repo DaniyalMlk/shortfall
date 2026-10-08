@@ -95,6 +95,7 @@ from .distributions import normal_cdf, normal_pdf
 
 __all__ = [
     "SADDLE_FLOOR",
+    "SPAN_DENOMINATOR",
     "Exceedance",
     "LossPortfolio",
     "Obligor",
@@ -124,6 +125,11 @@ __all__ = [
 #: form's own error here is 1.7e-05 relative: a hundred times smaller than the
 #: approximation's own.
 SADDLE_FLOOR = 1.0e-6
+
+#: Largest denominator an exposure's common unit may have. See
+#: :func:`lattice_span`: the ceiling is what turns "is this lattice-valued" from
+#: a question with the answer "always" into one worth asking.
+SPAN_DENOMINATOR = 1024
 
 _MAX_TILT = 50.0
 
@@ -172,14 +178,20 @@ def lattice_span(obligors: Sequence[Obligor]) -> float:
     than slightly. So the span is detected rather than assumed away, and zero
     means "no common unit found, treat as continuous".
 
-    Exact where it matters: the denominators are cleared with
-    :class:`fractions.Fraction` so that exposures of 0.25 and 0.1 come back as
-    0.05 and not as a float that is nearly it.
+    **Every double already lies on a lattice**, since a float is a dyadic
+    rational, so this cannot be a yes-or-no question -- asked exactly, ``pi``
+    is a whole multiple of a power of two and the answer is a useless span of
+    about 1e-16. The question needs a resolution, and
+    :data:`SPAN_DENOMINATOR` is it: an exposure has to be a whole multiple of
+    some unit with that denominator or smaller, reproduced to within a part in
+    a million million. Exposures of 0.25 and 0.1 then come back as 0.05 exactly
+    rather than as a float near it, and an exposure of ``pi`` comes back as no
+    lattice at all.
     """
     if not obligors:
         return 0.0
     try:
-        ratios = [Fraction(one.exposure).limit_denominator(10**6) for one in obligors]
+        ratios = [Fraction(one.exposure).limit_denominator(SPAN_DENOMINATOR) for one in obligors]
     except (OverflowError, ValueError):  # pragma: no cover - needs a non-finite
         return 0.0
     denominator = 1
@@ -403,6 +415,12 @@ def tail_probability(portfolio: LossPortfolio, level: float) -> Exceedance:
     difference of two nearly equal quantities under a square root, so the
     generic form loses digits to cancellation long before the saddlepoint is
     exactly zero. See :data:`SADDLE_FLOOR`.
+
+    On a lattice the level is taken to *be* a lattice point, since the
+    correction is half a step of the stated lattice. Asking an integer-exposure
+    portfolio about 35.34 and about 35 is the same question -- both are
+    ``P(L >= 36)`` -- and only the second gets the midpoint right, by 5.4e-04
+    against 1.3e-02.
 
     The result is clamped into ``[0, 1]`` and says so, because nothing in the
     expansion keeps it there.
