@@ -252,9 +252,7 @@ def test_parity_reports_its_convergence(tmp_path: Path) -> None:
 
 
 def test_drawdown_labels_the_dates_from_the_file(tmp_path: Path) -> None:
-    code, output = run(
-        "drawdown", str(sample_file(tmp_path / "r.csv")), "--periods", "252"
-    )
+    code, output = run("drawdown", str(sample_file(tmp_path / "r.csv")), "--periods", "252")
     assert code == 0
     assert "maximum drawdown" in output
     assert "2024-" in output
@@ -262,9 +260,10 @@ def test_drawdown_labels_the_dates_from_the_file(tmp_path: Path) -> None:
 
 
 def test_drawdown_says_when_the_worst_fall_never_recovered(tmp_path: Path) -> None:
-    path = write(tmp_path / "r.csv", "date,a\n" + "".join(
-        f"2024-01-{day:02d},-0.02\n" for day in range(1, 20)
-    ))
+    path = write(
+        tmp_path / "r.csv",
+        "date,a\n" + "".join(f"2024-01-{day:02d},-0.02\n" for day in range(1, 20)),
+    )
     code, output = run("drawdown", str(path))
     assert code == 0
     assert "not within the sample" in output
@@ -298,9 +297,7 @@ def test_factors_refuse_a_misaligned_factor_file(tmp_path: Path) -> None:
 # -- machine-readable output -------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "command", [["risk"], ["contributions"], ["parity"], ["drawdown"]]
-)
+@pytest.mark.parametrize("command", [["risk"], ["contributions"], ["parity"], ["drawdown"]])
 def test_json_output_parses(tmp_path: Path, command: list[str]) -> None:
     code, output = run("--json", *command, str(sample_file(tmp_path / "r.csv")))
     assert code == 0
@@ -526,10 +523,13 @@ def test_volatility_recovers_the_simulated_parameters(tmp_path: Path) -> None:
 
 def test_volatility_prints_the_square_root_of_time_comparison(tmp_path: Path) -> None:
     stream = io.StringIO()
-    assert main(
-        ["volatility", str(garch_file(tmp_path / "v.csv")), "--horizon", "250"],
-        stream=stream,
-    ) == 0
+    assert (
+        main(
+            ["volatility", str(garch_file(tmp_path / "v.csv")), "--horizon", "250"],
+            stream=stream,
+        )
+        == 0
+    )
     output = stream.getvalue()
     assert "Conditional volatility" in output
     assert "against square-root-of-time" in output
@@ -551,10 +551,13 @@ def test_the_horizon_figure_differs_from_square_root_of_time(tmp_path: Path) -> 
 
 def test_variance_targeting_is_available_from_the_command_line(tmp_path: Path) -> None:
     stream = io.StringIO()
-    assert main(
-        ["--json", "volatility", str(garch_file(tmp_path / "v.csv")), "--variance-targeting"],
-        stream=stream,
-    ) == 0
+    assert (
+        main(
+            ["--json", "volatility", str(garch_file(tmp_path / "v.csv")), "--variance-targeting"],
+            stream=stream,
+        )
+        == 0
+    )
     payload = json.loads(stream.getvalue())
     assert payload["varianceTargeted"] is True
     assert payload["converged"] is True
@@ -562,10 +565,13 @@ def test_variance_targeting_is_available_from_the_command_line(tmp_path: Path) -
 
 def test_volatility_fits_a_named_column_of_a_multi_asset_file(tmp_path: Path) -> None:
     stream = io.StringIO()
-    assert main(
-        ["--json", "volatility", str(sample_file(tmp_path / "r.csv")), "--column", "beta"],
-        stream=stream,
-    ) == 0
+    assert (
+        main(
+            ["--json", "volatility", str(sample_file(tmp_path / "r.csv")), "--column", "beta"],
+            stream=stream,
+        )
+        == 0
+    )
     assert json.loads(stream.getvalue())["series"] == "beta"
 
 
@@ -573,19 +579,20 @@ def test_volatility_falls_back_to_the_portfolio_on_a_multi_asset_file(
     tmp_path: Path,
 ) -> None:
     stream = io.StringIO()
-    assert main(
-        ["--json", "volatility", str(sample_file(tmp_path / "r.csv"))], stream=stream
-    ) == 0
+    assert main(["--json", "volatility", str(sample_file(tmp_path / "r.csv"))], stream=stream) == 0
     assert json.loads(stream.getvalue())["series"] == "portfolio"
 
 
 def test_volatility_names_the_columns_when_asked_for_one_that_is_missing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    assert main(
-        ["volatility", str(sample_file(tmp_path / "r.csv")), "--column", "delta"],
-        stream=io.StringIO(),
-    ) == 2
+    assert (
+        main(
+            ["volatility", str(sample_file(tmp_path / "r.csv")), "--column", "delta"],
+            stream=io.StringIO(),
+        )
+        == 2
+    )
     message = capsys.readouterr().err
     assert "'delta'" in message
     assert "'alpha'" in message
@@ -596,9 +603,7 @@ def test_volatility_refuses_a_sample_too_short_to_fit(tmp_path: Path) -> None:
     assert main(["volatility", str(path)], stream=io.StringIO()) == 2
 
 
-def fat_garch_file(
-    path: Path, *, periods: int = 1200, seed: int = 8, degrees: float = 4.5
-) -> Path:
+def fat_garch_file(path: Path, *, periods: int = 1200, seed: int = 8, degrees: float = 4.5) -> Path:
     """A GARCH path whose innovations are a standardised Student-t.
 
     The same variance parameters as :func:`garch_file`, so the two files differ
@@ -621,9 +626,9 @@ def fat_garch_file(
 def test_volatility_finds_the_fat_tail_and_widens_the_forecast(tmp_path: Path) -> None:
     """The default path: test for a fat tail, and use one when it is there."""
     stream = io.StringIO()
-    assert main(
-        ["--json", "volatility", str(fat_garch_file(tmp_path / "f.csv"))], stream=stream
-    ) == 0
+    assert (
+        main(["--json", "volatility", str(fat_garch_file(tmp_path / "f.csv"))], stream=stream) == 0
+    )
     payload = json.loads(stream.getvalue())
     assert payload["innovation"] == "student-t"
     assert payload["fatTail"]["fat"] is True
@@ -635,9 +640,7 @@ def test_volatility_finds_the_fat_tail_and_widens_the_forecast(tmp_path: Path) -
 def test_volatility_leaves_a_thin_tailed_series_alone(tmp_path: Path) -> None:
     """Gaussian innovations: reported as not identified rather than as a number."""
     stream = io.StringIO()
-    assert main(
-        ["--json", "volatility", str(garch_file(tmp_path / "v.csv"))], stream=stream
-    ) == 0
+    assert main(["--json", "volatility", str(garch_file(tmp_path / "v.csv"))], stream=stream) == 0
     payload = json.loads(stream.getvalue())
     assert payload["innovation"] == "normal"
     assert payload["fatTail"]["fat"] is False
@@ -651,22 +654,19 @@ def test_the_chosen_innovation_changes_the_reported_risk(tmp_path: Path) -> None
     figures = {}
     for innovation in ("normal", "student-t"):
         stream = io.StringIO()
-        assert main(
-            ["--json", "volatility", str(path), "--innovation", innovation], stream=stream
-        ) == 0
+        assert (
+            main(["--json", "volatility", str(path), "--innovation", innovation], stream=stream)
+            == 0
+        )
         payload = json.loads(stream.getvalue())
         assert payload["innovation"] == innovation
         assert "fatTail" not in payload, "the test is skipped when the shape is given"
         figures[innovation] = payload
     assert figures["student-t"]["valueAtRisk"] > figures["normal"]["valueAtRisk"]
-    assert (
-        figures["student-t"]["expectedShortfall"] > figures["normal"]["expectedShortfall"]
-    )
+    assert figures["student-t"]["expectedShortfall"] > figures["normal"]["expectedShortfall"]
     # The expected shortfall gap is the larger one, at the same fitted level.
     var_ratio = figures["student-t"]["valueAtRisk"] / figures["normal"]["valueAtRisk"]
-    es_ratio = (
-        figures["student-t"]["expectedShortfall"] / figures["normal"]["expectedShortfall"]
-    )
+    es_ratio = figures["student-t"]["expectedShortfall"] / figures["normal"]["expectedShortfall"]
     assert es_ratio > var_ratio > 1.0
 
 
@@ -679,14 +679,17 @@ def test_the_volatility_payload_is_strict_json_on_a_very_fat_tail(tmp_path: Path
     the token — so the assertion has to be on dumping with ``allow_nan`` off.
     """
     stream = io.StringIO()
-    assert main(
-        [
-            "--json",
-            "volatility",
-            str(fat_garch_file(tmp_path / "f.csv", degrees=3.0, seed=13)),
-        ],
-        stream=stream,
-    ) == 0
+    assert (
+        main(
+            [
+                "--json",
+                "volatility",
+                str(fat_garch_file(tmp_path / "f.csv", degrees=3.0, seed=13)),
+            ],
+            stream=stream,
+        )
+        == 0
+    )
     payload = json.loads(stream.getvalue())
     assert json.dumps(payload, allow_nan=False)
     if payload["degreesOfFreedom"] is not None and payload["degreesOfFreedom"] <= 4.0:
@@ -713,18 +716,21 @@ def test_volatility_says_so_when_it_finds_no_fat_tail(tmp_path: Path) -> None:
 
 def test_volatility_simulates_a_horizon_when_asked(tmp_path: Path) -> None:
     stream = io.StringIO()
-    assert main(
-        [
-            "--json",
-            "volatility",
-            str(garch_file(tmp_path / "v.csv")),
-            "--paths",
-            "4000",
-            "--horizon",
-            "10",
-        ],
-        stream=stream,
-    ) == 0
+    assert (
+        main(
+            [
+                "--json",
+                "volatility",
+                str(garch_file(tmp_path / "v.csv")),
+                "--paths",
+                "4000",
+                "--horizon",
+                "10",
+            ],
+            stream=stream,
+        )
+        == 0
+    )
     payload = json.loads(stream.getvalue())
     simulated = payload["horizonRisk"]
     assert simulated["paths"] == 4000
@@ -748,9 +754,10 @@ def test_the_horizon_simulation_is_off_unless_asked_for(tmp_path: Path) -> None:
 
 def test_the_horizon_simulation_explains_why_it_is_not_a_scaling(tmp_path: Path) -> None:
     stream = io.StringIO()
-    assert main(
-        ["volatility", str(garch_file(tmp_path / "v.csv")), "--paths", "4000"], stream=stream
-    ) == 0
+    assert (
+        main(["volatility", str(garch_file(tmp_path / "v.csv")), "--paths", "4000"], stream=stream)
+        == 0
+    )
     output = stream.getvalue()
     assert "Horizon risk over" in output
     assert "quantile vs square-root-of-time" in output
@@ -762,10 +769,13 @@ def test_the_two_draws_give_different_horizon_figures(tmp_path: Path) -> None:
     figures = {}
     for draw in ("bootstrap", "parametric"):
         stream = io.StringIO()
-        assert main(
-            ["--json", "volatility", str(path), "--paths", "4000", "--draw", draw],
-            stream=stream,
-        ) == 0
+        assert (
+            main(
+                ["--json", "volatility", str(path), "--paths", "4000", "--draw", draw],
+                stream=stream,
+            )
+            == 0
+        )
         figures[draw] = json.loads(stream.getvalue())["horizonRisk"]
         assert figures[draw]["draw"] == draw
     assert figures["bootstrap"]["valueAtRisk"] != figures["parametric"]["valueAtRisk"]
@@ -847,9 +857,7 @@ def test_tail_refuses_a_confidence_the_fit_does_not_cover(
 
 
 def test_tail_reports_the_curve_the_threshold_should_come_from(tmp_path: Path) -> None:
-    code, output = run(
-        "tail", str(sample_file(tmp_path / "r.csv", periods=1200)), "--curve", "5"
-    )
+    code, output = run("tail", str(sample_file(tmp_path / "r.csv", periods=1200)), "--curve", "5")
     assert code == 0
     assert "Mean excess against threshold" in output
     lines = [line for line in output.splitlines() if line.startswith(("0.", "1.", "2."))]
@@ -902,9 +910,7 @@ def test_the_tail_payload_is_json_a_strict_parser_accepts(tmp_path: Path) -> Non
     assert 0.0 < payload["lowestConfidence"] < 1.0
 
 
-def test_tail_fits_one_named_column(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_tail_fits_one_named_column(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     stream = io.StringIO()
     code = main(
         ["--json", "tail", str(sample_file(tmp_path / "r.csv", periods=900)), "--column", "beta"],
@@ -933,9 +939,7 @@ def copula_file(path: Path, *, periods: int = 400, degrees: float | None = 4.0) 
     for t in range(periods):
         common = rng.gauss(0.0, 1.0)
         mixing = (
-            1.0
-            if degrees is None
-            else math.sqrt(degrees / rng.gammavariate(degrees / 2.0, 2.0))
+            1.0 if degrees is None else math.sqrt(degrees / rng.gammavariate(degrees / 2.0, 2.0))
         )
         row = [f"2024-{(t % 12) + 1:02d}-{(t % 28) + 1:02d}"]
         for _ in range(4):
@@ -1095,8 +1099,12 @@ def test_bars_reports_every_estimator(tmp_path: Path) -> None:
     assert code == 0
     out = stream.getvalue()
     for name in (
-        "close-to-close", "parkinson", "garman-klass", "rogers-satchell",
-        "garman-klass-yang-zhang", "yang-zhang",
+        "close-to-close",
+        "parkinson",
+        "garman-klass",
+        "rogers-satchell",
+        "garman-klass-yang-zhang",
+        "yang-zhang",
     ):
         assert name in out
     assert "vs close-to-close" in out
@@ -1106,9 +1114,7 @@ def test_bars_estimators_agree_on_data_that_meets_their_assumptions(
     tmp_path: Path,
 ) -> None:
     stream = io.StringIO()
-    code = main(
-        ["bars", "--bars", str(ohlc_file(tmp_path / "b.csv")), "--json"], stream=stream
-    )
+    code = main(["bars", "--bars", str(ohlc_file(tmp_path / "b.csv")), "--json"], stream=stream)
     assert code == 0
     values = json.loads(stream.getvalue())["annualised_volatility"]
     # No gap and a negligible drift, so the only systematic difference left is
@@ -1177,9 +1183,7 @@ def test_bars_names_the_line_of_an_impossible_bar(tmp_path: Path) -> None:
 
 
 def test_bars_names_the_line_of_a_non_numeric_cell(tmp_path: Path) -> None:
-    path = write(
-        tmp_path / "bad.csv", "open,high,low,close\n100,101,99,100\n100,x,98,100\n"
-    )
+    path = write(tmp_path / "bad.csv", "open,high,low,close\n100,101,99,100\n100,x,98,100\n")
     stream = io.StringIO()
     assert main(["bars", "--bars", str(path)], stream=stream) == 2
 
@@ -1291,9 +1295,7 @@ def test_score_takes_an_explicit_bandwidth(tmp_path: Path) -> None:
     payload = json.loads(text)
     assert payload["lags"] == 0
     # No lags means the robust estimate is the naive one.
-    assert payload["standard_error"] == pytest.approx(
-        payload["naive_standard_error"], rel=1e-12
-    )
+    assert payload["standard_error"] == pytest.approx(payload["naive_standard_error"], rel=1e-12)
 
 
 def test_score_names_a_missing_column_and_lists_what_there_is(tmp_path: Path) -> None:
@@ -1380,9 +1382,7 @@ def test_spectrum_matches_every_row_to_one_charge(tmp_path: Path) -> None:
 
 def test_spectrum_says_where_the_spectra_stop_agreeing(tmp_path: Path) -> None:
     stream = io.StringIO()
-    code = main(
-        ["spectrum", str(sample_file(tmp_path / "r.csv", periods=2000))], stream=stream
-    )
+    code = main(["spectrum", str(sample_file(tmp_path / "r.csv", periods=2000))], stream=stream)
     assert code == 0
     output = stream.getvalue()
     assert "matched to the" in output
@@ -1449,3 +1449,108 @@ def test_spectrum_reports_the_wang_shift_matching_the_normal(tmp_path: Path) -> 
     assert code == 0
     payload = json.loads(stream.getvalue().split("\n\n")[-1])
     assert 1.5 < payload["wang_shift_matching_normal"] < 3.5
+
+
+# -- the portfolio loss tail --------------------------------------------------
+
+
+def obligor_file(path: Path, *, names: int = 100) -> Path:
+    rng = random.Random(20261008)
+    lines = ["probability,exposure"]
+    for _ in range(names):
+        lines.append(f"{round(0.004 + 0.075 * rng.random(), 6)},{rng.randint(1, 20)}")
+    return write(path, "\n".join(lines) + "\n")
+
+
+def test_portfolio_measures_the_error_against_the_exact_distribution(
+    tmp_path: Path,
+) -> None:
+    """The exact column is what makes the saddlepoint column a measurement."""
+    path = obligor_file(tmp_path / "book.csv")
+    stream = io.StringIO()
+    assert main(["--json", "portfolio", str(path)], stream) == 0
+    payload = json.loads(stream.getvalue())
+    assert payload["obligors"] == 100
+    assert payload["lattice_span"] == 1.0
+    assert payload["exact_available"] is True
+    for entry in payload["levels"]:
+        assert abs(entry["saddlepoint_error"]) < 2e-3
+        assert entry["exact"] > 0.0
+    deepest = payload["levels"][-1]
+    assert abs(deepest["normal_error"]) > 0.9
+    assert abs(deepest["saddlepoint_error"]) < 1e-3
+
+
+def test_portfolio_contributions_sum_to_the_shortfall_numerator(
+    tmp_path: Path,
+) -> None:
+    path = obligor_file(tmp_path / "book.csv")
+    stream = io.StringIO()
+    assert main(["--json", "portfolio", str(path), "--top", "100"], stream) == 0
+    payload = json.loads(stream.getvalue())
+    first = payload["levels"][0]
+    total = math.fsum(entry["contribution"] for entry in payload["contributions"])
+    assert total / first["saddlepoint"] == pytest.approx(first["conditional_mean"], rel=1e-10)
+    shares = [entry["contribution"] for entry in payload["contributions"]]
+    assert shares == sorted(shares, reverse=True)
+
+
+def test_portfolio_treats_incommensurate_exposures_as_continuous(
+    tmp_path: Path,
+) -> None:
+    """No common unit means no exact column, and the report says so."""
+    path = write(
+        tmp_path / "odd.csv",
+        "probability,exposure\n0.02,1.0\n0.03,3.14159265358979\n0.04,2.5\n",
+    )
+    stream = io.StringIO()
+    assert main(["portfolio", str(path)], stream) == 0
+    assert "no common exposure unit" in stream.getvalue()
+
+
+def test_portfolio_refuses_probabilities_in_per_cent(tmp_path: Path) -> None:
+    """A file in the other unit parses perfectly and is wrong by a hundred."""
+    path = write(tmp_path / "pc.csv", "probability,exposure\n2.0,100\n3.0,200\n")
+    stream = io.StringIO()
+    assert main(["portfolio", str(path)], stream) == 2
+
+
+def test_portfolio_names_a_bad_line_and_an_empty_file(tmp_path: Path) -> None:
+    path = write(tmp_path / "bad.csv", "probability,exposure\n0.02,100\nnonsense,x\n")
+    stream = io.StringIO()
+    assert main(["portfolio", str(path)], stream) == 2
+    empty = write(tmp_path / "empty.csv", "# only a comment\n")
+    assert main(["portfolio", str(empty)], stream) == 2
+    missing = tmp_path / "nope.csv"
+    assert main(["portfolio", str(missing)], stream) == 2
+
+
+def test_portfolio_at_one_requested_level(tmp_path: Path) -> None:
+    path = obligor_file(tmp_path / "book.csv")
+    stream = io.StringIO()
+    assert main(["--json", "portfolio", str(path), "--level", "143"], stream) == 0
+    payload = json.loads(stream.getvalue())
+    assert len(payload["levels"]) == 1
+    assert payload["levels"][0]["level"] == 143.0
+    assert payload["levels"][0]["exact"] == pytest.approx(4.426e-05, rel=0.01)
+
+
+def test_portfolio_reports_a_clamped_level_rather_than_hiding_it(
+    tmp_path: Path,
+) -> None:
+    """Two names at four hundred to one has no asymptotic regime to appeal to.
+
+    At a loss of 400 the raw value is 4.15, so clamping is the only thing
+    keeping the report inside a probability. The sequence is not monotone
+    either: the raw value at a loss of 2 is above the one at a loss of 1.
+    """
+    path = write(tmp_path / "two.csv", "probability,exposure\n0.5,1\n0.5,400\n")
+    stream = io.StringIO()
+    assert main(["portfolio", str(path), "--level", "400"], stream) == 0
+    text = stream.getvalue()
+    assert "left [0, 1] before clamping" in text
+    stream = io.StringIO()
+    assert main(["--json", "portfolio", str(path), "--level", "400"], stream) == 0
+    payload = json.loads(stream.getvalue())
+    assert payload["levels"][0]["raw"] > 4.0
+    assert payload["levels"][0]["saddlepoint"] == 1.0

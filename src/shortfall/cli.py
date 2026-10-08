@@ -49,6 +49,17 @@ from .historical import historical_risk
 from .horizon import Innovations, horizon_risk
 from .parametric import Distribution, normal_risk, portfolio_risk, student_t_risk
 from .realised import BadBar, Bars, Estimator, realised_volatility, tick_bias_factor
+from .saddlepoint import (
+    LossPortfolio,
+    Obligor,
+    SaddlepointError,
+    exact_distribution,
+    exact_tail,
+    normal_tail,
+    saddlepoint_shortfall,
+    shortfall_contributions,
+    tail_probability,
+)
 from .scoring import compare, fz0_loss, quantile_loss
 from .series import Panel
 from .spectral import (
@@ -120,14 +131,12 @@ def read_table(path: Path) -> Table:
         for position, cell in enumerate(cells):
             if not _is_number(cell):
                 raise InputError(
-                    f"{path} line {line}, column {names[position]!r}: {cell!r} is not "
-                    "a number"
+                    f"{path} line {line}, column {names[position]!r}: {cell!r} is not a number"
                 )
             value = float(cell)
             if math.isnan(value) or math.isinf(value):
                 raise InputError(
-                    f"{path} line {line}, column {names[position]!r}: {cell!r} is not "
-                    "finite"
+                    f"{path} line {line}, column {names[position]!r}: {cell!r} is not finite"
                 )
             if value <= -1.0:
                 raise InputError(
@@ -214,14 +223,10 @@ def table(rows: Sequence[Sequence[str]], stream: TextIO) -> None:
     """Print rows in aligned columns, first row being the header."""
     if not rows:
         return
-    widths = [
-        max(len(str(row[column])) for row in rows) for column in range(len(rows[0]))
-    ]
+    widths = [max(len(str(row[column])) for row in rows) for column in range(len(rows[0]))]
     for position, row in enumerate(rows):
         cells = [
-            str(cell).ljust(widths[column])
-            if column == 0
-            else str(cell).rjust(widths[column])
+            str(cell).ljust(widths[column]) if column == 0 else str(cell).rjust(widths[column])
             for column, cell in enumerate(row)
         ]
         print("  ".join(cells).rstrip(), file=stream)
@@ -297,9 +302,7 @@ def command_risk(arguments: argparse.Namespace, stream: TextIO) -> dict[str, Any
     return payload
 
 
-def command_contributions(
-    arguments: argparse.Namespace, stream: TextIO
-) -> dict[str, Any]:
+def command_contributions(arguments: argparse.Namespace, stream: TextIO) -> dict[str, Any]:
     parsed = read_table(arguments.returns)
     panel = parsed.panel
     weights = parse_weights(arguments.weights, panel)
@@ -358,9 +361,7 @@ def command_contributions(
                 f"{entry['share'] * 100:.1f}%",
             ]
         )
-    rows.append(
-        ["total", f"{math.fsum(weights):.4f}", "", percent(allocation.total), "100.0%"]
-    )
+    rows.append(["total", f"{math.fsum(weights):.4f}", "", percent(allocation.total), "100.0%"])
     print(f"Euler allocation of {allocation.measure}\n", file=stream)
     table(rows, stream)
     print(
@@ -441,9 +442,7 @@ def command_drawdown(arguments: argparse.Namespace, stream: TextIO) -> dict[str,
     }
     if arguments.periods:
         payload["annualised_return"] = portfolio.annualised_return(arguments.periods)
-        payload["annualised_volatility"] = portfolio.annualised_volatility(
-            arguments.periods
-        )
+        payload["annualised_volatility"] = portfolio.annualised_volatility(arguments.periods)
         if worst.depth > 0.0:
             payload["calmar"] = calmar(portfolio, arguments.periods)
         try:
@@ -564,8 +563,7 @@ def command_factors(arguments: argparse.Namespace, stream: TextIO) -> dict[str, 
             "work here, and the implied covariance understates how much those two "
             "move together."
             if abs(worst) > 0.3
-            else "Small enough for the diagonal specific-risk assumption to be "
-            "tenable."
+            else "Small enough for the diagonal specific-risk assumption to be tenable."
         ),
         file=stream,
     )
@@ -598,9 +596,7 @@ def command_validate(arguments: argparse.Namespace, stream: TextIO) -> dict[str,
     shortfalls: list[float] | None = None
     if arguments.es_column is not None:
         if arguments.es_column not in columns:
-            raise InputError(
-                f"{arguments.forecasts} has no column named {arguments.es_column!r}"
-            )
+            raise InputError(f"{arguments.forecasts} has no column named {arguments.es_column!r}")
         shortfalls = list(panel[arguments.es_column].values)
 
     result = validate(
@@ -680,8 +676,7 @@ def command_validate(arguments: argparse.Namespace, stream: TextIO) -> dict[str,
             f"\nExpected shortfall: test 1 {found.conditional:+.4f}, "
             f"test 2 {found.unconditional:+.4f}"
             + (
-                f" (p = {found.unconditional_p_value:.4f} from "
-                f"{found.replications} replications)"
+                f" (p = {found.unconditional_p_value:.4f} from {found.replications} replications)"
                 if found.unconditional_p_value is not None
                 else " — pass --replications for a p-value"
             ),
@@ -757,9 +752,7 @@ def command_volatility(arguments: argparse.Namespace, stream: TextIO) -> dict[st
         "converged": fitted.converged,
         "varianceTargeted": fitted.variance_targeted,
         "horizon": horizon,
-        "horizonVolatility": math.sqrt(
-            fitted.horizon_variance(horizon, last_return=values[-1])
-        ),
+        "horizonVolatility": math.sqrt(fitted.horizon_variance(horizon, last_return=values[-1])),
         "squareRootOfTimeRatio": fitted.scaling_against_square_root_of_time(
             horizon, last_return=values[-1]
         ),
@@ -798,12 +791,8 @@ def command_volatility(arguments: argparse.Namespace, stream: TextIO) -> dict[st
             "relativeStandardError": simulated.relative_standard_error,
             "simulatedVolatility": simulated.simulated_volatility,
             "analyticVolatility": simulated.analytic_volatility,
-            "volatilityAgainstSquareRootOfTime": (
-                simulated.scaling_against_square_root_of_time
-            ),
-            "quantileAgainstSquareRootOfTime": (
-                simulated.quantile_against_square_root_of_time
-            ),
+            "volatilityAgainstSquareRootOfTime": (simulated.scaling_against_square_root_of_time),
+            "quantileAgainstSquareRootOfTime": (simulated.quantile_against_square_root_of_time),
         }
     if verdict is not None:
         payload["fatTail"] = {
@@ -836,9 +825,7 @@ def command_volatility(arguments: argparse.Namespace, stream: TextIO) -> dict[st
         ["innovation", fitted.innovation.value],
         [
             "degrees of freedom",
-            f"{fitted.degrees_of_freedom:.2f}"
-            if fitted.degrees_identified
-            else "not identified",
+            f"{fitted.degrees_of_freedom:.2f}" if fitted.degrees_identified else "not identified",
         ],
         [f"value at risk ({arguments.confidence:.1%})", percent(conditional.value_at_risk)],
         ["expected shortfall", percent(conditional.expected_shortfall)],
@@ -892,8 +879,7 @@ def command_volatility(arguments: argparse.Namespace, stream: TextIO) -> dict[st
                 ["figure", "value"],
                 [
                     f"value at risk ({arguments.confidence:.1%})",
-                    f"{percent(simulated.value_at_risk)} "
-                    f"+/- {percent(simulated.standard_error)}",
+                    f"{percent(simulated.value_at_risk)} +/- {percent(simulated.standard_error)}",
                 ],
                 ["expected shortfall", percent(simulated.expected_shortfall)],
                 ["simulated volatility", percent(simulated.simulated_volatility)],
@@ -1006,9 +992,7 @@ def command_tail(arguments: argparse.Namespace, stream: TextIO) -> dict[str, Any
                 "meanExcess": point.mean_excess,
                 "standardError": point.standard_error,
             }
-            for point in mean_excess_curve(
-                [-value for value in values], points=arguments.curve
-            )
+            for point in mean_excess_curve([-value for value in values], points=arguments.curve)
         ]
     if arguments.json:
         return payload
@@ -1143,11 +1127,7 @@ def command_copula(arguments: argparse.Namespace, stream: TextIO) -> dict[str, A
         payload["tail_dependence_premium"] = result.tail_dependence_premium
     if arguments.json:
         return payload
-    label = (
-        "Student-t"
-        if fitted.family is Family.STUDENT_T
-        else "Gaussian"
-    )
+    label = "Student-t" if fitted.family is Family.STUDENT_T else "Gaussian"
     degrees = (
         f" at {fitted.degrees_of_freedom:.1f} degrees of freedom"
         if fitted.degrees_of_freedom is not None
@@ -1191,8 +1171,7 @@ def command_copula(arguments: argparse.Namespace, stream: TextIO) -> dict[str, A
             file=stream,
         )
         print(
-            f"Likelihood ratio against the Gaussian special case "
-            f"{fitted.likelihood_ratio:.1f}.",
+            f"Likelihood ratio against the Gaussian special case {fitted.likelihood_ratio:.1f}.",
             file=stream,
         )
     if fitted.projected:
@@ -1441,9 +1420,7 @@ def command_score(arguments: argparse.Namespace, stream: TextIO) -> dict[str, An
         f"{result.naive_standard_error:.8f})",
         file=stream,
     )
-    print(
-        f"Diebold-Mariano: {result.statistic:+.4f}, p = {result.p_value:.4g}", file=stream
-    )
+    print(f"Diebold-Mariano: {result.statistic:+.4f}, p = {result.p_value:.4g}", file=stream)
     if result.better is None:
         print("The two score identically.", file=stream)
     else:
@@ -1582,9 +1559,7 @@ def command_spectrum(arguments: argparse.Namespace, stream: TextIO) -> dict[str,
     reference = ShortfallSpectrum(probability)
     target = tail_share(returns, reference, arguments.deep)
 
-    def matched(
-        build: Callable[[float], Spectrum], low: float, high: float
-    ) -> Spectrum:
+    def matched(build: Callable[[float], Spectrum], low: float, high: float) -> Spectrum:
         """Bisect a family's own parameter onto the shortfall charge.
 
         Each family is monotone in its parameter, which the tests assert, so a
@@ -1627,9 +1602,7 @@ def command_spectrum(arguments: argparse.Namespace, stream: TextIO) -> dict[str,
                 "subadditive": coherence.subadditive,
                 "comonotonic_gap": coherence.comonotonic,
                 "sample": spectral_risk(returns, spectrum),
-                "normal": normal_spectral(
-                    mean=mean, volatility=volatility, spectrum=spectrum
-                ),
+                "normal": normal_spectral(mean=mean, volatility=volatility, spectrum=spectrum),
             }
         )
 
@@ -1701,6 +1674,200 @@ def command_spectrum(arguments: argparse.Namespace, stream: TextIO) -> dict[str,
     return payload
 
 
+def read_obligors(path: Path) -> list[Obligor]:
+    """Parse ``probability,exposure`` rows, with an optional name column.
+
+    Probabilities are decimals and a value above one is refused rather than
+    used: a file in per cent parses perfectly and is wrong by a factor of a
+    hundred, which no later number would reveal.
+    """
+    try:
+        text = path.read_text()
+    except OSError as error:
+        raise InputError(f"cannot read {path}: {error}") from error
+    obligors = []
+    for number, raw in enumerate(text.splitlines(), start=1):
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        fields = [field.strip() for field in line.replace(",", " ").split()]
+        if len(fields) < 2:
+            raise InputError(
+                f"line {number} has {len(fields)} fields; an obligor is a default "
+                f"probability and an exposure: 0.02,1000"
+            )
+        try:
+            probability = float(fields[0])
+            exposure = float(fields[1])
+        except ValueError as error:
+            if number == 1:
+                continue  # a header row
+            raise InputError(f"line {number}: {line!r} is not an obligor") from error
+        if probability > 1.0:
+            raise InputError(
+                f"line {number} gives a default probability of {probability}, which "
+                "is over one. Probabilities here are decimals: 0.02, not 2."
+            )
+        obligors.append(Obligor(probability, exposure))
+    if not obligors:
+        raise InputError(f"{path} has no obligors in it")
+    return obligors
+
+
+def command_portfolio(arguments: argparse.Namespace, stream: TextIO) -> dict[str, Any]:
+    """The loss tail of a portfolio of obligors, three ways.
+
+    The normal column is in the report to be beaten, and the exact column is
+    there whenever the exposures share a common unit -- which is most of the
+    time, and is what makes the saddlepoint column's error a measurement
+    rather than a claim. On a skewed portfolio the normal approximation is
+    already wrong by more than a tenth at the median, so the comparison is not
+    a deep-tail curiosity.
+
+    The contributions are printed because the shortfall's numerator is an
+    exact decomposition over obligors, so the per-name numbers come out of the
+    total for free rather than needing a second method.
+    """
+    obligors = read_obligors(arguments.obligors)
+    portfolio = LossPortfolio.detected(obligors)
+    masses: tuple[float, ...] | None = None
+    if portfolio.span > 0.0:
+        try:
+            masses = exact_distribution(portfolio, unit=portfolio.span)
+        except SaddlepointError:  # pragma: no cover - span guarantees the lattice
+            masses = None
+
+    levels = [
+        portfolio.mean * multiple
+        for multiple in (1.0, 1.5, 2.0, 3.0, 4.0)
+        if portfolio.mean * multiple < portfolio.maximum
+    ]
+    if arguments.level is not None:
+        levels = [arguments.level]
+    if portfolio.span > 0.0:
+        levels = [round(level / portfolio.span) * portfolio.span for level in levels]
+
+    rows: list[dict[str, Any]] = []
+    for level in levels:
+        if not 0.0 < level < portfolio.maximum:
+            continue
+        approximate = tail_probability(portfolio, level)
+        entry: dict[str, Any] = {
+            "level": level,
+            "saddlepoint": approximate.probability,
+            "raw": approximate.raw,
+            "clamped": approximate.clamped,
+            "near_mean": approximate.near_mean,
+            "tilt": approximate.tilt,
+            "normal": normal_tail(portfolio, level),
+            "conditional_mean": saddlepoint_shortfall(portfolio, level),
+        }
+        if masses is not None:
+            exact = exact_tail(masses, level, unit=portfolio.span)
+            entry["exact"] = exact
+            if exact > 0.0:
+                entry["saddlepoint_error"] = approximate.probability / exact - 1.0
+                entry["normal_error"] = entry["normal"] / exact - 1.0
+        rows.append(entry)
+
+    shares = shortfall_contributions(portfolio, levels[0]) if levels else ()
+    ranked = sorted(
+        (
+            {
+                "obligor": position,
+                "probability": one.probability,
+                "exposure": one.exposure,
+                "contribution": share,
+            }
+            for position, (one, share) in enumerate(zip(portfolio.obligors, shares, strict=True))
+        ),
+        key=lambda entry: -float(entry["contribution"]),
+    )
+
+    payload = {
+        "obligors": len(portfolio.obligors),
+        "mean": portfolio.mean,
+        "volatility": math.sqrt(portfolio.variance),
+        "maximum": portfolio.maximum,
+        "lattice_span": portfolio.span,
+        "exact_available": masses is not None,
+        "levels": rows,
+        "contributions": ranked[: arguments.top],
+    }
+    if arguments.json:
+        return payload
+
+    print(
+        f"{len(portfolio.obligors)} obligors, mean loss {portfolio.mean:.4f}, "
+        f"volatility {math.sqrt(portfolio.variance):.4f}, maximum "
+        f"{portfolio.maximum:.4f}\n"
+        + (
+            f"lattice span {portfolio.span:g}, so the exact distribution is a "
+            "convolution and the errors below are measured\n"
+            if masses is not None
+            else "no common exposure unit, so the loss is treated as continuous "
+            "and there is no exact column\n"
+        ),
+        file=stream,
+    )
+    header = ["loss", "saddlepoint", "normal"]
+    if masses is not None:
+        header = ["loss", "exact", "saddlepoint", "err", "normal", "err"]
+    body = []
+    for entry in rows:
+        if masses is not None:
+            body.append(
+                [
+                    f"{entry['level']:.4g}",
+                    f"{entry['exact']:.6e}",
+                    f"{entry['saddlepoint']:.6e}",
+                    f"{entry.get('saddlepoint_error', float('nan')):+.2e}",
+                    f"{entry['normal']:.6e}",
+                    f"{entry.get('normal_error', float('nan')):+.2e}",
+                ]
+            )
+        else:
+            body.append(
+                [
+                    f"{entry['level']:.4g}",
+                    f"{entry['saddlepoint']:.6e}",
+                    f"{entry['normal']:.6e}",
+                ]
+            )
+    table([header, *body], stream)
+    if rows:
+        first = rows[0]
+        print(
+            f"\nConditional mean above {first['level']:.4g}: "
+            f"{first['conditional_mean']:.4f}. Its numerator is an exact "
+            f"decomposition over obligors, so the contributions below sum to it.",
+            file=stream,
+        )
+        table(
+            [
+                ["obligor", "probability", "exposure", "contribution"],
+                *(
+                    [
+                        str(entry["obligor"]),
+                        f"{float(entry['probability']):.4f}",
+                        f"{float(entry['exposure']):.4g}",
+                        f"{float(entry['contribution']):.6f}",
+                    ]
+                    for entry in ranked[: arguments.top]
+                ),
+            ],
+            stream,
+        )
+    if any(entry["clamped"] for entry in rows):
+        print(
+            "\nAt least one level left [0, 1] before clamping. Nothing in the "
+            "expansion keeps it inside, and with few obligors there is no "
+            "asymptotic regime to appeal to.",
+            file=stream,
+        )
+    return payload
+
+
 COMMANDS = {
     "risk": command_risk,
     "contributions": command_contributions,
@@ -1715,6 +1882,7 @@ COMMANDS = {
     "score": command_score,
     "expectile": command_expectile,
     "spectrum": command_spectrum,
+    "portfolio": command_portfolio,
 }
 
 
@@ -1730,14 +1898,10 @@ def build_parser() -> argparse.ArgumentParser:
     # Worth having for its own sake, and it doubles as the cheapest possible
     # smoke test of an install: it imports the package and prints something.
     parser.add_argument("--version", action="version", version=f"shortfall {__version__}")
-    parser.add_argument(
-        "--json", action="store_true", help="emit machine-readable output"
-    )
+    parser.add_argument("--json", action="store_true", help="emit machine-readable output")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    def common(
-        sub: argparse.ArgumentParser, *, weights: bool = True, shrink: bool = True
-    ) -> None:
+    def common(sub: argparse.ArgumentParser, *, weights: bool = True, shrink: bool = True) -> None:
         sub.add_argument("returns", type=Path, help="CSV of periodic returns")
         if weights:
             sub.add_argument(
@@ -1749,8 +1913,7 @@ def build_parser() -> argparse.ArgumentParser:
             sub.add_argument(
                 "--shrink",
                 action="store_true",
-                help="use the Ledoit-Wolf shrinkage covariance instead of the "
-                "sample one",
+                help="use the Ledoit-Wolf shrinkage covariance instead of the sample one",
             )
 
     risk = subparsers.add_parser("risk", help="value at risk and expected shortfall")
@@ -1784,9 +1947,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     factors = subparsers.add_parser("factors", help="factor exposures and attribution")
     common(factors)
-    factors.add_argument(
-        "--factors", type=Path, required=True, help="CSV of factor returns"
-    )
+    factors.add_argument("--factors", type=Path, required=True, help="CSV of factor returns")
 
     moving = subparsers.add_parser(
         "volatility",
@@ -1798,9 +1959,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     common(moving)
-    moving.add_argument(
-        "--column", default=None, help="fit this column rather than the portfolio"
-    )
+    moving.add_argument("--column", default=None, help="fit this column rather than the portfolio")
     moving.add_argument(
         "--horizon", type=int, default=10, help="periods ahead to aggregate. Defaults to 10."
     )
@@ -1860,9 +2019,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     common(extreme)
-    extreme.add_argument(
-        "--column", default=None, help="fit this column rather than the portfolio"
-    )
+    extreme.add_argument("--column", default=None, help="fit this column rather than the portfolio")
     extreme.add_argument(
         "--confidence",
         type=float,
@@ -2057,9 +2214,7 @@ def build_parser() -> argparse.ArgumentParser:
     expectile.add_argument(
         "--weights", default=None, help="portfolio weights; equal weights if omitted"
     )
-    expectile.add_argument(
-        "--level", type=float, default=0.99, help="the expectile level, tau"
-    )
+    expectile.add_argument("--level", type=float, default=0.99, help="the expectile level, tau")
     expectile.add_argument(
         "--confidence",
         type=float,
@@ -2109,6 +2264,31 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    loss = subparsers.add_parser(
+        "portfolio",
+        help="the loss tail of a portfolio of obligors, by saddlepoint",
+        description=(
+            "Reads a file of 'default probability,exposure' rows and reports the "
+            "exceedance probability of the portfolio loss by the saddlepoint "
+            "approximation, beside a normal with the same first two moments and "
+            "-- whenever the exposures share a common unit -- the exact answer "
+            "by convolution. The saddlepoint's error is therefore measured "
+            "rather than claimed. A normal is already wrong by more than a tenth "
+            "near the mean of a skewed portfolio, so this is not a deep-tail "
+            "curiosity. The conditional mean's numerator is an exact "
+            "decomposition over obligors, so the per-name contributions come out "
+            "of the total for free."
+        ),
+    )
+    loss.add_argument("obligors", type=Path, help="CSV of probability,exposure rows")
+    loss.add_argument(
+        "--level",
+        type=float,
+        default=None,
+        help="one loss level; multiples of the mean if omitted",
+    )
+    loss.add_argument("--top", type=int, default=10, help="how many contributions to print")
+
     bars = subparsers.add_parser(
         "bars",
         help="volatility from open, high, low and close",
@@ -2122,15 +2302,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     bars.add_argument("--bars", type=Path, required=True, help="CSV of OHLC rows")
-    bars.add_argument(
-        "--periods", type=float, default=252.0, help="bars per year, for annualising"
-    )
+    bars.add_argument("--periods", type=float, default=252.0, help="bars per year, for annualising")
     bars.add_argument(
         "--ticks",
         type=int,
         default=None,
-        help="price observations within a bar; reports the discretisation "
-        "correction alongside",
+        help="price observations within a bar; reports the discretisation correction alongside",
     )
     bars.add_argument("--json", action="store_true")
 
