@@ -100,6 +100,14 @@ overstates a 99% expected shortfall by between **2.2 and 2.9 times** here. The
 reweighting concentrates on scenarios where the first series was low, and the
 second series' worst scenarios are only partly those.
 
+And the error does not have a fixed sign, which is worse than being large. A
+view on a *mean* spreads its weight over the whole sample and moves the far
+tail by less than the shift predicts; a view on the *probability of a tail
+event* puts its weight where the losses already are and moves it by more. On a
+three-asset sample the same portfolio gives **0.46** of the predicted move
+under a mean view and **1.79** under a tail-probability view, so there is no
+correction factor to apply to the shortcut — only the reweighting.
+
 **The usual confidence blend is optimal exactly when the view is on a
 partition, and not otherwise.** Taking ``(1 - c) p + c q`` is what partial
 confidence usually means, and it produces a distribution whose view value is

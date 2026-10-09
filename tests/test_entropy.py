@@ -558,3 +558,77 @@ def test_the_posterior_reports_what_it_is() -> None:
     assert len(posterior.multipliers) == 1
     assert posterior.multipliers[0] != 0.0
     assert posterior.iterations >= 1
+
+
+def three_assets() -> tuple[list[float], list[float]]:
+    """A driver and a portfolio built on it, fixed, with a modest loading.
+
+    Separate from :func:`sample` because the finding below needs a portfolio
+    whose own tail is only partly driven by the series the view is placed on.
+    With a loading near one the two tails coincide and the comparison has
+    nothing to say.
+    """
+    rng = random.Random(7)
+    driver: list[float] = []
+    portfolio: list[float] = []
+    for _ in range(SCENARIOS):
+        first = rng.gauss(0.0003, 0.011)
+        second = 0.45 * first + 0.0004 + 0.006 * rng.gauss(0.0, 1.0)
+        third = -0.2 * first + 0.0001 + 0.003 * rng.gauss(0.0, 1.0)
+        driver.append(first)
+        portfolio.append((first + second + third) / 3.0)
+    return driver, portfolio
+
+
+def captured_fraction(
+    driver: list[float], portfolio: list[float], view: View
+) -> float:
+    """How much of the parallel-shift prediction the reweighting actually delivers."""
+    count = len(driver)
+    flat = uniform(count)
+    mean_driver = math.fsum(driver) / count
+    before = stressed_risk(portfolio, flat, 0.99)
+    variance = math.fsum((value - mean_driver) ** 2 for value in driver) / count
+    covariance = (
+        math.fsum(
+            (one - mean_driver) * (other - before.mean)
+            for one, other in zip(driver, portfolio, strict=True)
+        )
+        / count
+    )
+    slope = covariance / variance
+    posterior = pool([view])
+    after = stressed_risk(portfolio, posterior.weights, 0.99)
+    move = (
+        math.fsum(
+            weight * value
+            for weight, value in zip(posterior.weights, driver, strict=True)
+        )
+        - mean_driver
+    )
+    return (after.expected_shortfall - before.expected_shortfall) / (-slope * move)
+
+
+def test_the_shortcut_misses_in_both_directions() -> None:
+    """Which is worse than missing in one, because no factor corrects it.
+
+    Shifting the loss distribution by beta times the view's move is the
+    comparison this module exists to beat, and it is not beaten by a fixed
+    amount. A view on a mean spreads its weight over the whole sample and moves
+    the far tail by *less* than the shift predicts; a view on the probability of
+    a tail event puts its weight where the losses already are and moves it by
+    *more*. On one sample, with one portfolio, the same two kinds of view land
+    on opposite sides of the prediction.
+    """
+    driver, portfolio = three_assets()
+    mean_driver = math.fsum(driver) / SCENARIOS
+    on_mean = captured_fraction(
+        driver, portfolio, mean_view(driver, mean_driver - 0.01)
+    )
+    flags = [value < -0.02 for value in driver]
+    observed = sum(flags) / SCENARIOS
+    assert observed > 0.0
+    on_tail = captured_fraction(
+        driver, portfolio, probability_view(flags, 3.0 * observed)
+    )
+    assert on_mean < 1.0 < on_tail, (on_mean, on_tail)

@@ -37,6 +37,13 @@ from .contributions import (
 from .copula import Family, Marginal, copula_risk
 from .covariance import ledoit_wolf, sample_covariance
 from .drawdown import calmar, maximum_drawdown, sortino, ulcer_index
+from .entropy import (
+    mean_view,
+    pool,
+    probability_view,
+    stressed_risk,
+    temper,
+)
 from .expectile import (
     matching_level,
     normal_expectile,
@@ -1868,6 +1875,186 @@ def command_portfolio(arguments: argparse.Namespace, stream: TextIO) -> dict[str
     return payload
 
 
+def command_stress(arguments: argparse.Namespace, stream: TextIO) -> dict[str, Any]:
+    """A view imposed by reweighting, beside the shortcut it replaces.
+
+    The output is laid out around one comparison. Reweighting the scenarios to
+    satisfy a view moves the mean of the portfolio by the sample's own
+    regression coefficient on the view function — which is also what a desk
+    gets by shifting the loss distribution by beta times the view, by hand, in
+    a spreadsheet. So if the mean were all anybody wanted, none of this would
+    be needed, and the command says so.
+
+    The tail is where they part. The reweighting concentrates on the scenarios
+    where the *view's* series was extreme, and the portfolio's worst scenarios
+    are only partly those, so the expected shortfall moves by a fraction of
+    what the parallel shift predicts. That fraction is the last line of the
+    report, and it is well under one.
+
+    The effective scenario count is printed next to the entropy because it is
+    the number that says whether to believe the tail figure at all: a view
+    pushed far enough leaves a thousand-scenario set reporting a 99% shortfall
+    off a few hundred.
+    """
+    parsed = read_table(arguments.returns)
+    panel = parsed.panel
+    weights = parse_weights(arguments.weights, panel)
+    portfolio = panel.portfolio(weights)
+    returns = list(portfolio.values)
+    count = len(returns)
+
+    if arguments.on is None:
+        driver = returns
+        driver_name = portfolio.name
+    else:
+        names = [one.name for one in panel.series]
+        if arguments.on not in names:
+            raise InputError(
+                f"no column named {arguments.on!r}; the file has {', '.join(names)}"
+            )
+        driver = list(panel.series[names.index(arguments.on)].values)
+        driver_name = arguments.on
+
+    prior_mean = math.fsum(driver) / count
+    views = []
+    if arguments.mean is not None:
+        views.append(mean_view(driver, arguments.mean, f"{driver_name} mean"))
+    if arguments.below is not None:
+        flags = [value < arguments.below for value in driver]
+        observed = sum(flags) / count
+        if observed == 0.0:
+            raise InputError(
+                f"no scenario has {driver_name} below {arguments.below}, so no "
+                "reweighting of this sample can give that event any probability"
+            )
+        target = (
+            arguments.probability
+            if arguments.probability is not None
+            else min(observed * arguments.multiple, 1.0 - 1e-12)
+        )
+        views.append(
+            probability_view(flags, target, f"P({driver_name} < {arguments.below})")
+        )
+    if not views:
+        raise InputError(
+            "give a view: --mean, or --below with --multiple or --probability"
+        )
+
+    posterior = pool(views)
+    if arguments.confidence_in_view < 1.0:
+        posterior = temper(posterior, arguments.confidence_in_view)
+
+    flat = (1.0 / count,) * count
+    before = stressed_risk(returns, flat, arguments.confidence)
+    after = stressed_risk(returns, posterior.weights, arguments.confidence)
+
+    # The shortcut: regress the portfolio on the view's series and shift the
+    # whole loss distribution by the slope times the view's move.
+    variance = math.fsum((value - prior_mean) ** 2 for value in driver) / count
+    covariance = (
+        math.fsum(
+            (one - prior_mean) * (other - before.mean)
+            for one, other in zip(driver, returns, strict=True)
+        )
+        / count
+    )
+    slope = covariance / variance if variance > 0.0 else float("nan")
+    realised_move = (
+        math.fsum(
+            weight * value
+            for weight, value in zip(posterior.weights, driver, strict=True)
+        )
+        - prior_mean
+    )
+    predicted = -slope * realised_move
+    shortfall_move = after.expected_shortfall - before.expected_shortfall
+    captured = shortfall_move / predicted if predicted != 0.0 else float("nan")
+
+    payload = {
+        "observations": count,
+        "driver": driver_name,
+        "views": [view.label for view in views],
+        "confidence": arguments.confidence,
+        "confidence_in_view": arguments.confidence_in_view,
+        "relative_entropy": posterior.relative_entropy,
+        "effective_scenarios": posterior.effective_scenarios,
+        "concentration": posterior.concentration,
+        "driver_move": realised_move,
+        "regression_slope": slope,
+        "value_at_risk_before": before.value_at_risk,
+        "value_at_risk_after": after.value_at_risk,
+        "expected_shortfall_before": before.expected_shortfall,
+        "expected_shortfall_after": after.expected_shortfall,
+        "mean_before": before.mean,
+        "mean_after": after.mean,
+        "predicted_shortfall_move": predicted,
+        "shortfall_move": shortfall_move,
+        "captured_fraction": captured,
+    }
+    if arguments.json:
+        return payload
+    print(
+        f"{count} scenarios, view on {driver_name}: "
+        f"{'; '.join(view.label for view in views)}",
+        file=stream,
+    )
+    if arguments.confidence_in_view < 1.0:
+        print(
+            f"blended back towards the prior at confidence "
+            f"{arguments.confidence_in_view:.2f}, so the view holds only in part",
+            file=stream,
+        )
+    print(file=stream)
+    table(
+        [
+            ["", "before", "after"],
+            ["mean", percent(before.mean), percent(after.mean)],
+            [
+                f"value at risk ({arguments.confidence:.1%})",
+                percent(before.value_at_risk),
+                percent(after.value_at_risk),
+            ],
+            [
+                f"expected shortfall ({arguments.confidence:.1%})",
+                percent(before.expected_shortfall),
+                percent(after.expected_shortfall),
+            ],
+        ],
+        stream,
+    )
+    print(
+        f"\nThe view cost {posterior.relative_entropy:.6f} nats and left "
+        f"{posterior.effective_scenarios:.1f} effective scenarios of {count} "
+        f"({posterior.concentration:.1%}). Nothing was discarded: every scenario "
+        f"still carries weight, so the dependence in the sample is intact.",
+        file=stream,
+    )
+    print(
+        f"\n{driver_name} moved {percent(realised_move)}. Regressing the "
+        f"portfolio on it gives a slope of {slope:.4f}, so shifting the whole "
+        f"loss distribution by hand would raise the expected shortfall by "
+        f"{percent(predicted)}.",
+        file=stream,
+    )
+    reading = (
+        f"The reweighting concentrates on scenarios where {driver_name} was "
+        "extreme, and the portfolio's worst scenarios are only partly those, "
+        "so the shortcut gets the mean right and overstates the tail."
+        if captured < 1.0
+        else "A view on the probability of a tail event puts its weight where "
+        "the losses already are, so the tail moves further than a parallel "
+        "shift of the whole distribution would -- the shortcut understates it "
+        "here, where a view on the mean makes it overstate. The error changes "
+        "sign with the kind of view, so there is no correction factor to apply."
+    )
+    print(
+        f"It actually moved {percent(shortfall_move)}, which is "
+        f"{captured:.2f} of that. {reading}",
+        file=stream,
+    )
+    return payload
+
+
 COMMANDS = {
     "risk": command_risk,
     "contributions": command_contributions,
@@ -1883,6 +2070,7 @@ COMMANDS = {
     "expectile": command_expectile,
     "spectrum": command_spectrum,
     "portfolio": command_portfolio,
+    "stress": command_stress,
 }
 
 
@@ -2288,6 +2476,64 @@ def build_parser() -> argparse.ArgumentParser:
         help="one loss level; multiples of the mean if omitted",
     )
     loss.add_argument("--top", type=int, default=10, help="how many contributions to print")
+
+    stressed = subparsers.add_parser(
+        "stress",
+        help="impose a view by reweighting the scenarios, and price the tail under it",
+        description=(
+            "Reweights the rows of the returns file so that a view holds exactly, "
+            "taking the distribution closest to the original in relative entropy, "
+            "and reports the portfolio's risk before and after. Nothing is "
+            "discarded, so the dependence between columns survives the stress -- "
+            "which is the whole difference from a scenario filter. The report "
+            "ends on the comparison that matters. The mean moves by exactly the "
+            "regression coefficient a parallel shift would use; the expected "
+            "shortfall does not, and which way it misses depends on the view. A "
+            "view on a mean moves the tail by about half of what the shift "
+            "predicts and a view on a tail probability moves it by nearly twice, "
+            "so the shortcut has no correction factor."
+        ),
+    )
+    common(stressed, shrink=False)
+    stressed.add_argument(
+        "--on",
+        default=None,
+        metavar="COLUMN",
+        help="place the view on one column instead of on the portfolio",
+    )
+    stressed.add_argument(
+        "--mean",
+        type=float,
+        default=None,
+        help="a view on the posterior mean of the column the view is on",
+    )
+    stressed.add_argument(
+        "--below",
+        type=float,
+        default=None,
+        metavar="LEVEL",
+        help="a view on the probability of falling below this level",
+    )
+    stressed.add_argument(
+        "--multiple",
+        type=float,
+        default=2.0,
+        help="multiply the observed probability of that event by this, with --below",
+    )
+    stressed.add_argument(
+        "--probability",
+        type=float,
+        default=None,
+        help="set that probability outright instead, with --below",
+    )
+    stressed.add_argument("--confidence", type=float, default=0.99)
+    stressed.add_argument(
+        "--confidence-in-view",
+        type=float,
+        default=1.0,
+        metavar="C",
+        help="blend the posterior back towards the prior: 1 holds the view exactly",
+    )
 
     bars = subparsers.add_parser(
         "bars",
