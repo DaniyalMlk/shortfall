@@ -1554,3 +1554,105 @@ def test_portfolio_reports_a_clamped_level_rather_than_hiding_it(
     payload = json.loads(stream.getvalue())
     assert payload["levels"][0]["raw"] > 4.0
     assert payload["levels"][0]["saddlepoint"] == 1.0
+
+
+# -- stress ------------------------------------------------------------------
+
+
+def test_stress_reports_the_risk_before_and_after(tmp_path: Path) -> None:
+    path = sample_file(tmp_path / "r.csv")
+    code, out = run("stress", str(path), "--on", "alpha", "--mean", "-0.01")
+    assert code == 0
+    assert "view on alpha" in out
+    assert "expected shortfall" in out
+    assert "effective scenarios" in out
+    assert "Nothing was discarded" in out
+
+
+def test_stress_moves_the_mean_by_the_regression_slope(tmp_path: Path) -> None:
+    """The report's own arithmetic, checked against itself through the payload.
+
+    The predicted move is the slope times the realised move in the driver, and
+    the mean of the portfolio moves by exactly that. It is the expected
+    shortfall that does not, which is the point of the command.
+    """
+    path = sample_file(tmp_path / "r.csv")
+    code, out = run(
+        "--json", "stress", str(path), "--on", "alpha", "--mean", "-0.01"
+    )
+    assert code == 0
+    payload = json.loads(out)
+    predicted_mean = payload["mean_before"] + payload["regression_slope"] * payload[
+        "driver_move"
+    ]
+    # To 0.7% here rather than the 0.1% of the thousand-scenario sample in
+    # test_entropy: the agreement is exact only for a jointly normal sample and
+    # this file has three hundred rows of a mixture.
+    assert payload["mean_after"] == pytest.approx(predicted_mean, rel=1e-2)
+    assert payload["captured_fraction"] != pytest.approx(1.0, rel=0.05)
+    assert 0.0 < payload["concentration"] < 1.0
+    assert payload["relative_entropy"] > 0.0
+
+
+def test_stress_takes_a_tail_probability_view(tmp_path: Path) -> None:
+    path = sample_file(tmp_path / "r.csv")
+    code, out = run(
+        "--json",
+        "stress",
+        str(path),
+        "--on",
+        "alpha",
+        "--below",
+        "-0.015",
+        "--multiple",
+        "3",
+    )
+    assert code == 0
+    payload = json.loads(out)
+    assert payload["views"] == ["P(alpha < -0.015)"]
+    assert payload["expected_shortfall_after"] > payload["expected_shortfall_before"]
+
+
+def test_stress_blends_back_towards_the_prior(tmp_path: Path) -> None:
+    path = sample_file(tmp_path / "r.csv")
+    full = json.loads(
+        run("--json", "stress", str(path), "--on", "alpha", "--mean", "-0.01")[1]
+    )
+    half = json.loads(
+        run(
+            "--json",
+            "stress",
+            str(path),
+            "--on",
+            "alpha",
+            "--mean",
+            "-0.01",
+            "--confidence-in-view",
+            "0.5",
+        )[1]
+    )
+    assert half["relative_entropy"] < full["relative_entropy"]
+    assert half["effective_scenarios"] > full["effective_scenarios"]
+    assert abs(half["driver_move"]) < abs(full["driver_move"])
+    _, text = run(
+        "stress",
+        str(path),
+        "--on",
+        "alpha",
+        "--mean",
+        "-0.01",
+        "--confidence-in-view",
+        "0.5",
+    )
+    assert "holds only in part" in text
+
+
+def test_stress_refuses_a_view_it_cannot_place(tmp_path: Path) -> None:
+    path = sample_file(tmp_path / "r.csv")
+    assert run("stress", str(path))[0] == 2
+    assert run("stress", str(path), "--on", "absent", "--mean", "0.0")[0] == 2
+    # A level no scenario reaches cannot be given any probability by reweighting
+    # a sample, however the weights are chosen.
+    assert run("stress", str(path), "--below", "-5.0", "--multiple", "2")[0] == 2
+    # And a mean outside the range the scenarios span is refused by the solver.
+    assert run("stress", str(path), "--on", "alpha", "--mean", "5.0")[0] == 2

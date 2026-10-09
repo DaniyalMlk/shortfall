@@ -1511,11 +1511,144 @@ rising to 65% in the tail — an error growing as the tail thins, which is exact
 the shape of failure the saddlepoint exists to avoid. It cannot be told from a
 method that simply does not work, except against something exact.
 
+## A view imposed by reweighting, not by filtering
+
+Every estimator above reads a sample and takes it as given, which leaves no way
+to ask what the risk would be *if* something were true. The usual answer is to
+keep the scenarios that match the story and drop the rest, and that does not
+produce a stressed scenario set: it produces a third of a sample, with the
+dependence between assets re-estimated on whatever is left.
+
+`shortfall.entropy` reweights instead. Among all distributions on the existing
+scenarios that satisfy the view, it takes the one closest to the original in
+relative entropy. Nothing is discarded, the view holds exactly, and everything
+the view did not mention moves only as far as the sample's own dependence
+implies.
+
+```bash
+shortfall stress returns.csv --on equity --mean -0.01
+```
+
+```
+1000 scenarios, view on equity: equity mean
+
+                            before    after
+--------------------------  ------  -------
+mean                        0.028%  -0.394%
+value at risk (99.0%)       1.152%   1.411%
+expected shortfall (99.0%)  1.284%   1.477%
+
+The view cost 0.421059 nats and left 656.4 effective scenarios of 1000 (65.6%).
+Nothing was discarded: every scenario still carries weight, so the dependence
+in the sample is intact.
+
+equity moved -1.014%. Regressing the portfolio on it gives a slope of 0.4172,
+so shifting the whole loss distribution by hand would raise the expected
+shortfall by 0.423%.
+It actually moved 0.193%, which is 0.46 of that. The reweighting concentrates
+on scenarios where equity was extreme, and the portfolio's worst scenarios are
+only partly those, so the shortcut gets the mean right and overstates the tail.
+```
+
+Those last three lines are the reason the module exists, and they are also the
+honest case against it.
+
+### For a mean, a regression would have done
+
+A view on the mean of one series moves the mean of another by that series'
+least-squares slope on the first — not approximately, and not only to first
+order. On a thousand scenarios of two correlated series the sample slope is
+0.652444, and the slopes implied by views of 0.1, 0.25, 0.5 and 1.0 standard
+deviations are 0.652141, 0.651922, 0.652120 and 0.653246: agreement to between
+0.05% and 0.12% over a tenfold range of view strength. Nothing linear was
+assumed anywhere. The exponential tilt reproduces the projection.
+
+That is worth stating plainly rather than burying, because it says the
+machinery is not inventing a relationship — and it says that if the mean of
+something else is all anybody wants, this is an expensive way to get a
+regression coefficient.
+
+### The tail does not follow, and it misses in both directions
+
+The same views move the second series' expected shortfall by far less than a
+parallel shift of its distribution would. At a view of half a standard
+deviation the mean moves by the regression amount, 0.3261, while the 99%
+expected shortfall moves by 0.1263 — **0.39** of it — and the 95% by 0.81. The
+attenuation deepens both further into the tail and as the view strengthens: at
+a full standard deviation, 0.35 and 0.63. So the shortcut overstates a 99%
+expected shortfall by between two and three times.
+
+And the error does not have a fixed sign, which is worse than it being large. A
+view on a *mean* spreads its weight across the whole sample. A view on the
+*probability of a tail event* puts its weight where the losses already are, and
+moves the tail further than the shift predicts. On one three-asset file, with
+one portfolio, the mean view delivers **0.46** of the predicted move and the
+tail-probability view **1.79** — so the sentence the command prints under its
+table is chosen on the sign, because a fixed one would be wrong half the time.
+There is no correction factor to apply to the shortcut, only the reweighting.
+
+### The dual, and a line search that had to be told what it was looking for
+
+The primal problem has one unknown per scenario and a handful of constraints.
+Its dual has one unknown per view, its gradient *is* the view residual, and its
+Hessian is the posterior covariance of the view functions — so the Hessian is
+positive semidefinite by construction, Newton applies, and the stopping test is
+a statement about what the caller asked for. Every solve in the tests converges
+in five to eight steps. The optimal dual value is minus the relative entropy,
+which is computed both ways and checked: a sign dropped in the objective would
+otherwise still converge, smoothly, to the wrong point.
+
+The line search took three attempts. Accepting a step on `candidate <= value`
+never terminates, because at the optimum the objective stops changing and
+zero-progress steps are accepted until the iteration budget runs out — a
+converged solve reported as a failure to converge. Requiring strict decrease
+terminates and stops too early: the dual value of a small-probability view is
+itself around 1e-04 and goes flat to the last bit of a double while the residual
+is still 1e-09. Accepting a step that improves the objective *or the residual*
+took the same solves to a worst residual of 1.4e-16 and the relative entropy
+from 2.3e-08 relative to 5.1e-13.
+
+### The closed form is the only oracle, and the blend is optimal exactly once
+
+A view on a probability has an answer in arithmetic: scale the weights inside
+the set, scale them outside, and nothing else can change, because relative
+entropy on a partition is minimised cell by cell. Over twenty combinations of
+threshold and target the solver matches it to 1.4e-16 on the weights. Views on
+a mean have no closed form, so every accuracy assertion in the tests is on the
+probability case and the mean views are checked for properties instead.
+
+The same fact settles a question about partial confidence. Taking
+`(1 - c) p + c q` is what confidence in a view usually means, and for a
+probability view it is *also* the entropy-minimising distribution for the view
+value it produces — exactly, at every confidence, measured at 0.0% excess —
+because blending two per-cell scalings leaves each cell proportional. For a
+mean view it is not, since a blend of two exponential tilts is not an
+exponential tilt, and the cost sits where nobody would look for it: at **low**
+confidence in a **strong** view. On a view moving the mean a full standard
+deviation the blend carries 31.8% more relative entropy than re-solving at the
+value it actually produced when `c = 0.25`, 13.8% at 0.5 and 4.1% at 0.75.
+
+### Four failures, four messages
+
+A target outside the range the scenarios span, a view that is constant, two
+views that are linearly dependent, and two views each reachable and jointly
+impossible are different faults with different fixes. The first two are caught
+before the solve starts, by name.
+
+The last two both arrive as a singular Hessian, and telling them apart took a
+test. A Hessian singular *at the prior* means the view functions are dependent
+over the scenarios and no tilt separates them. One that goes singular later
+means the tilt has already driven the weights onto a face of the simplex, where
+functions independent over the whole set no longer are — which is what happens
+on the way out of the feasible region. The residual distinguishes them, and the
+first version of this module reported two disjoint sets each asked for a
+probability of 0.6 as linearly dependent views.
+
 ## Development
 
 ```bash
 pip install -e ".[dev]"
-pytest          # 1542 tests
+pytest          # 1650 tests
 mypy --strict
 ruff check .
 ```
