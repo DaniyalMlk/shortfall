@@ -850,3 +850,62 @@ And `distributions.binomial_sf` is `P(X >= k)` where this module's tail is
 function disagree by 0.10 at the median of a binomial — which reads as a
 catastrophic accuracy failure and is a convention. The convolution is exact to
 1.1e-16 against integer arithmetic; it was never the suspect.
+
+## Phase 22 — A view, imposed without discarding anything
+
+- [x] A view as a linear statement about the posterior, with the mean and the
+      probability of a set as named constructors
+- [x] The solve in the dual, whose dimension is the number of views rather than
+      the number of scenarios, and whose Hessian is the posterior covariance of
+      the view functions
+- [x] The identity between the optimal dual value and the relative entropy
+      asserted, since the two are reached by different routes
+- [x] A line search that accepts a step improving the objective *or* the
+      residual, because the objective of a small-probability view goes flat
+      three orders of magnitude before the residual does
+- [x] The probability-view case checked against its closed form, which exists
+      because relative entropy on a partition is minimised cell by cell
+- [x] An already-satisfied view returning the prior's own floats rather than a
+      normalised copy of them
+- [x] Four failure modes separated and named: a target outside the span, a
+      constant view, dependent views, and views that are individually reachable
+      and jointly impossible
+- [x] The relative entropy and the effective number of scenarios returned with
+      every solve, because a view pushed into the tail spends the sample
+- [x] The confidence blend provided, with its cost against re-solving measured
+      rather than assumed to be zero
+- [x] Weighted quantile and expected shortfall, the quantile uninterpolated and
+      the shortfall reporting the mass it actually averaged over
+- [x] A command-line entry point that puts the reweighted risk beside the
+      unstressed one and beside the shortcut it replaces
+
+The gap this closes is not an estimator. Every other module here reads a sample
+and reports what is in it; none of them can answer a conditional question, and
+the thing people do instead — keep the scenarios that fit the story — throws
+away the dependence that made the sample worth using in the first place.
+Reweighting keeps every scenario and satisfies the view exactly, which is a
+strictly better trade whenever the sample is the thing being trusted.
+
+### What it is worth, stated honestly
+
+For a mean, nothing: the move it induces in an unmentioned series is that
+series' least-squares slope on the view function, to within 0.12% over a
+tenfold range of view strength. A regression would have done.
+
+For a tail, everything, and not by a factor that can be guessed. A mean view
+moves a 99% expected shortfall by 0.35 to 0.45 of what shifting the whole
+distribution by the regression amount predicts; a tail-probability view on the
+same portfolio moves it by 1.79 of that. The error changes sign with the kind
+of view, so the shortcut has no correction and the reweighting is the only way
+to the number.
+
+### The line search was wrong twice before it was right
+
+Not in a way that returned a wrong answer: in a way that returned a worse one
+and said nothing. A non-strict descent test accepts zero-progress steps at the
+optimum until the budget runs out, and reports a solved problem as
+unconverged. A strict one terminates and stops while the residual is still
+1e-09, because the dual value of a small-probability view is itself 1e-04 and
+reaches the last bit of a double first. The stopping criterion belongs on the
+quantity the caller asked about, and once the residual is allowed to justify a
+step the same solves reach 1.4e-16.
