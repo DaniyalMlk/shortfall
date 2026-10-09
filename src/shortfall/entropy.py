@@ -56,6 +56,20 @@ at the optimum the objective stops changing at all, so ``<=`` accepts
 zero-progress steps until the iteration budget runs out and a converged solve is
 reported as a failure to converge.
 
+**Four failures, four messages.** A target outside the range the scenarios
+span, a view that is constant, two views that are linearly dependent, and two
+views that are each reachable and jointly impossible are different faults with
+different fixes, and a solver that reports them all as "did not converge" is
+not much better than one that returns a number. The first two are caught before
+the solve starts. The last two both arrive as a singular Hessian, and telling
+them apart took a test: a Hessian that is singular *at the prior* means the view
+functions are dependent over the scenarios and no tilt separates them, while one
+that goes singular later means the tilt has already driven the weights onto a
+face of the simplex, where functions independent over the whole set no longer
+are — which is what happens on the way out of the feasible region. The residual
+is what distinguishes them, and the first version of this module reported two
+disjoint sets each asked for a probability of 0.6 as linearly dependent views.
+
 **An already-satisfied view returns the prior exactly.** The multipliers are
 zero, so the exponential tilt is ``exp(0)`` and the weights are the prior's own
 floats — not a copy that round-tripped through a normalisation. A caller
@@ -590,6 +604,7 @@ def pool(
                 weights, multipliers, base, gradient, iteration - 1, value
             )
 
+        worst = max(abs(gradient[j]) / spans[j] for j in range(size))
         hessian = [
             [
                 math.fsum(
@@ -603,9 +618,23 @@ def pool(
         try:
             step = _solve_spd(hessian, [-entry for entry in gradient])
         except NotPositiveDefinite as error:
-            raise ViewsNotIdentified(
-                "the views are linearly dependent over these scenarios, so the "
-                "posterior that meets them is not unique"
+            # A singular Hessian at the prior and a singular Hessian later are
+            # two different diagnoses. At the prior the views are genuinely
+            # linearly dependent over the scenarios and no amount of tilting
+            # separates them. Later it means the tilt has already driven the
+            # weights onto a face of the simplex, where functions that were
+            # independent over the whole scenario set are no longer so — which
+            # happens when the targets cannot be met and the solve is on its
+            # way out of the feasible region. The residual tells them apart.
+            if iteration == 1 or worst <= STALL_TOLERANCE:
+                raise ViewsNotIdentified(
+                    "the views are linearly dependent over these scenarios, so "
+                    "the posterior that meets them is not unique"
+                ) from error
+            raise ViewsInfeasible(
+                "the tilt collapsed onto a subset of the scenarios while the "
+                f"views are still missed by up to {worst:.3e} of their span, "
+                "which means they are jointly unreachable on this scenario set"
             ) from error
 
         # Backtracking, accepting a step that improves *either* the objective
@@ -617,7 +646,6 @@ def pool(
         # of what the gradient can resolve. The residual is what the caller
         # asked about, so it gets a vote. Halving also guards against a step so
         # long that the tilt overflows.
-        worst = max(abs(gradient[j]) / spans[j] for j in range(size))
         scale = 1.0
         for _ in range(60):
             trial = [multipliers[j] + scale * step[j] for j in range(size)]
