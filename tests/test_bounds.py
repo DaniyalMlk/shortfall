@@ -625,3 +625,22 @@ def test_the_dataclasses_are_frozen() -> None:
     assert isinstance(worst.arrangement, Arrangement)
     best = best_case_value_at_risk(uniform_book(2), confidence=LEVEL, points=32)
     assert isinstance(best, BestCase)
+
+
+def test_the_figures_printed_in_the_readme_are_the_figures_produced() -> None:
+    """The worked example in the README, at the default cell count.
+
+    Pinned to four decimal places because they are in print; a change to the
+    numerics that moves them has to move the document in the same commit.
+    """
+    book = [
+        normal_loss(0.0, 0.02, label="equity"),
+        exponential_loss(0.015, label="credit"),
+        pareto_loss(2.5, 0.004, label="operational"),
+    ]
+    bounds = dependence_bounds(book, confidence=0.99)
+    assert f"{bounds.best.upper:.4%}" == "5.0543%"
+    assert f"{bounds.worst.lower:.4%}" == "17.1541%"
+    assert f"{bounds.comonotonic:.4%}" == "14.0843%"
+    assert f"{bounds.ratio:.2f}" == "3.39"
+    assert f"{bounds.worst.superadditivity:.2f}" == "1.22"
