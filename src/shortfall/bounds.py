@@ -90,20 +90,20 @@ import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from .distributions import normal_pdf, normal_ppf
+from .distributions import normal_ppf
 from .parametric import normal_tail_mean
 
 #: Tail points per marginal when the caller does not choose. Large enough that
 #: the uniform oracle is reproduced to 1e-4 at eight positions and small enough
 #: that a five-position problem rearranges in well under a second.
-DEFAULT_POINTS = 1024
+DEFAULT_TAIL_POINTS = 1024
 
 #: Sweeps without an improvement in the objective before stopping. Three is
 #: enough to get past the two-sweep cycles the uniform grids fall into.
-DEFAULT_PATIENCE = 4
+DEFAULT_SWEEP_PATIENCE = 4
 
 #: Hard cap on sweeps, so a cycling problem terminates.
-MAX_SWEEPS = 512
+MAX_REARRANGEMENT_SWEEPS = 512
 
 #: Probabilities are kept this far inside ``(0, 1)`` when a quantile function is
 #: probed for monotonicity, since many are infinite at the ends.
@@ -143,8 +143,8 @@ class LossTail:
     carried alongside because the proof-level bounds need them exactly, and the
     endpoints because which grids exist depends on them.
 
-    Build one with :func:`uniform_tail`, :func:`exponential_tail`,
-    :func:`pareto_tail` or :func:`normal_tail` to get the exact means and
+    Build one with :func:`uniform_loss`, :func:`exponential_loss`,
+    :func:`pareto_loss` or :func:`normal_loss` to get the exact means and
     endpoints filled in, or construct it directly from any quantile function and
     accept that the bounds requiring a tail mean will refuse.
     """
@@ -222,7 +222,7 @@ class LossTail:
 # -- ready-made marginals, with exact tail means -----------------------------
 
 
-def uniform_tail(low: float = 0.0, high: float = 1.0, *, label: str = "") -> LossTail:
+def uniform_loss(low: float = 0.0, high: float = 1.0, *, label: str = "") -> LossTail:
     """A uniform loss on ``[low, high]``, the one case with an exact oracle.
 
     Both of its conditional tails are uniform and the uniform distribution is
@@ -242,7 +242,7 @@ def uniform_tail(low: float = 0.0, high: float = 1.0, *, label: str = "") -> Los
     )
 
 
-def exponential_tail(scale: float = 1.0, *, label: str = "") -> LossTail:
+def exponential_loss(scale: float = 1.0, *, label: str = "") -> LossTail:
     """An exponential loss with mean ``scale``.
 
     Its expected shortfall exceeds its value at risk by exactly ``scale``,
@@ -266,7 +266,7 @@ def exponential_tail(scale: float = 1.0, *, label: str = "") -> LossTail:
     )
 
 
-def pareto_tail(shape: float, scale: float = 1.0, *, label: str = "") -> LossTail:
+def pareto_loss(shape: float, scale: float = 1.0, *, label: str = "") -> LossTail:
     """A Pareto loss on ``[scale, inf)`` with tail index ``shape``.
 
     The tail mean needs ``shape > 1`` to exist at all, and the ratio of the
@@ -285,11 +285,11 @@ def pareto_tail(shape: float, scale: float = 1.0, *, label: str = "") -> LossTai
     def lower_mean(c: float) -> float:
         if c <= 0.0:
             return scale
-        return scale * mean * (1.0 - (1.0 - c) ** (1.0 - 1.0 / shape)) / c
+        return scale * mean * (1.0 - math.pow(1.0 - c, 1.0 - 1.0 / shape)) / c
 
     return LossTail(
-        quantile=lambda u: scale * (1.0 - u) ** (-1.0 / shape),
-        upper_mean=lambda c: scale * mean * (1.0 - c) ** (-1.0 / shape),
+        quantile=lambda u: scale * math.pow(1.0 - u, -1.0 / shape),
+        upper_mean=lambda c: scale * mean * math.pow(1.0 - c, -1.0 / shape),
         lower_mean=lower_mean,
         upper_endpoint=math.inf,
         lower_endpoint=scale,
@@ -297,11 +297,11 @@ def pareto_tail(shape: float, scale: float = 1.0, *, label: str = "") -> LossTai
     )
 
 
-def normal_tail(mean: float = 0.0, volatility: float = 1.0, *, label: str = "") -> LossTail:
+def normal_loss(mean: float = 0.0, volatility: float = 1.0, *, label: str = "") -> LossTail:
     """A normal loss, the case with no grid check available at either end.
 
     ``mean`` and ``volatility`` describe the **loss**, so a position with a zero
-    expected return and a 2% daily volatility is ``normal_tail(0.0, 0.02)``.
+    expected return and a 2% daily volatility is ``normal_loss(0.0, 0.02)``.
     Reuses :func:`shortfall.parametric.normal_tail_mean` for both ends, which is
     stated there as ``E[Z | Z <= a]`` and gives the upper tail by symmetry.
     """
@@ -359,8 +359,8 @@ def rearrange(
     columns: Sequence[Sequence[float]],
     *,
     maximise_minimum: bool = True,
-    patience: int = DEFAULT_PATIENCE,
-    max_sweeps: int = MAX_SWEEPS,
+    patience: int = DEFAULT_SWEEP_PATIENCE,
+    max_sweeps: int = MAX_REARRANGEMENT_SWEEPS,
 ) -> Arrangement:
     """Rearrange each column against the sum of the others, repeatedly.
 
@@ -612,9 +612,9 @@ def worst_case_value_at_risk(
     tails: Sequence[LossTail],
     *,
     confidence: float = 0.99,
-    points: int = DEFAULT_POINTS,
-    patience: int = DEFAULT_PATIENCE,
-    max_sweeps: int = MAX_SWEEPS,
+    points: int = DEFAULT_TAIL_POINTS,
+    patience: int = DEFAULT_SWEEP_PATIENCE,
+    max_sweeps: int = MAX_REARRANGEMENT_SWEEPS,
 ) -> WorstCase:
     """The largest value at risk the marginals admit, bracketed.
 
@@ -654,9 +654,9 @@ def best_case_value_at_risk(
     tails: Sequence[LossTail],
     *,
     confidence: float = 0.99,
-    points: int = DEFAULT_POINTS,
-    patience: int = DEFAULT_PATIENCE,
-    max_sweeps: int = MAX_SWEEPS,
+    points: int = DEFAULT_TAIL_POINTS,
+    patience: int = DEFAULT_SWEEP_PATIENCE,
+    max_sweeps: int = MAX_REARRANGEMENT_SWEEPS,
 ) -> BestCase:
     """The smallest value at risk the marginals admit, bracketed.
 
@@ -696,9 +696,9 @@ def dependence_bounds(
     tails: Sequence[LossTail],
     *,
     confidence: float = 0.99,
-    points: int = DEFAULT_POINTS,
-    patience: int = DEFAULT_PATIENCE,
-    max_sweeps: int = MAX_SWEEPS,
+    points: int = DEFAULT_TAIL_POINTS,
+    patience: int = DEFAULT_SWEEP_PATIENCE,
+    max_sweeps: int = MAX_REARRANGEMENT_SWEEPS,
 ) -> Bounds:
     """Both ends of the interval, from one call."""
     return Bounds(
@@ -733,9 +733,9 @@ def completely_mixable_level(tails: Sequence[LossTail], *, confidence: float = 0
 
 
 __all__ = [
-    "DEFAULT_PATIENCE",
-    "DEFAULT_POINTS",
-    "MAX_SWEEPS",
+    "DEFAULT_SWEEP_PATIENCE",
+    "DEFAULT_TAIL_POINTS",
+    "MAX_REARRANGEMENT_SWEEPS",
     "Arrangement",
     "BestCase",
     "Bounds",
@@ -746,10 +746,10 @@ __all__ = [
     "best_case_value_at_risk",
     "completely_mixable_level",
     "dependence_bounds",
-    "exponential_tail",
-    "normal_tail",
-    "pareto_tail",
+    "exponential_loss",
+    "normal_loss",
+    "pareto_loss",
     "rearrange",
-    "uniform_tail",
+    "uniform_loss",
     "worst_case_value_at_risk",
 ]
