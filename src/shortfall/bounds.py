@@ -8,80 +8,103 @@ naming, and the usual way of acknowledging that is a sentence in a footnote.
 There is a sharper question. Given the marginal loss distributions and
 **nothing else** — no correlation, no copula, no panel — what is the set of
 values ``VaR_alpha`` of the sum can take? That set is an interval, both of its
-ends are computable, and its upper end is not where the intuition puts it.
+ends are computable, and its upper end is not where the intuition puts it. On
+the three-position book in the tests — a normal equity loss, an exponential
+credit loss and a Pareto operational loss — the widest 99% value at risk the
+marginals admit is **3.39 times the narrowest**, with not one marginal changed
+between the two.
 
 **The worst case is not the comonotonic coupling.** Lining every loss up so
 that they are all large together maximises expected shortfall, because expected
 shortfall is comonotonic-additive and that is its maximum. Value at risk is a
 quantile, not an average, and it is not subadditive: a coupling that makes the
-tail sum *flat* rather than *extreme* can push the quantile above the
-comonotonic one, by moving probability out of the very worst outcomes and into
-the level just above the quantile. Measured here on Pareto marginals with tail
-index 2 at the 99% level, the worst case runs 1.41 times the comonotonic value
-at two positions, 1.73 at four, 1.86 at eight, 1.92 at sixteen and 1.93 at
-thirty-two, against a limit of ``theta / (theta - 1) = 2`` as positions are
-added. On exponential marginals it caps out at 1.217, which is that
-distribution's own ratio of expected shortfall to value at risk. The size of
-the effect is a statement about tail weight, and it is large enough that a
-diversified book's value at risk can nearly double without any marginal
-changing.
+tail sum *flat* rather than extreme pushes the quantile above the comonotonic
+one, by moving probability out of the very worst outcomes and into the level
+just above the quantile. On Pareto marginals with tail index 2 at the 99% level
+the worst case runs 1.476 times the comonotonic value at two positions, 1.791
+at four, 1.927 at eight, 1.985 at sixteen and 1.9997 at thirty-two, against the
+limit ``theta / (theta - 1) = 2``. Sweeping the tail index at eight positions
+gives 2.712 against a limit of 3 at index 1.5, then 1.927 against 2, 1.488
+against 1.5 and 1.249 against 1.25: the lighter the tail, the sooner the limit
+arrives. Exponential marginals cap out at 1.2171, which is that distribution's
+own ratio of expected shortfall to value at risk, 1.217147 at this level,
+reached to 1.217107 by sixteen positions.
 
-**Two bounds are inequalities and two are arrangements.** Reading them apart is
-the whole design here.
+That is the size of the effect, and it is large enough that a book's value at
+risk can nearly double without any position's distribution moving.
+
+**Two of the four bounds are inequalities and two are arrangements.** Reading
+them apart is the whole design here.
 
 The upper bound on the worst case is a proof: ``VaR_alpha(S) <= ES_alpha(S)``
 for any coupling at all, and ``ES_alpha`` is subadditive, so the worst case is
 at most the sum of the marginals' own expected shortfalls. Nothing numerical
 enters. Symmetrically, the lower bound on the *best* case is the sum of the
-marginals' lower tail means.
+marginals' lower tail means. Both are exact closed forms for the marginals
+built here, which is why each one carries its tail means rather than having
+them integrated off its quantile function.
 
 The other two ends come from the **rearrangement algorithm**: discretise each
-marginal's tail onto ``N`` equiprobable points and repeatedly replace one
-column with the arrangement that runs against the sum of the others, which
-flattens the row sums. The minimum row sum of the result is the value at risk
-of an explicit coupling, so it is attained and therefore a bound from below —
+marginal's tail onto ``N`` equiprobable cells and repeatedly replace one column
+with the arrangement that runs against the sum of the others, which flattens
+the row sums. The minimum row sum of the result is the value at risk of an
+explicit coupling, so it is attained and therefore a bound from below —
 provided the discretisation *understates* each marginal, which the
 left-endpoint grid does. The right-endpoint grid overstates each marginal, and
 its rearrangement is **not** a bound from above, because the algorithm returns
-an arrangement rather than the discrete optimum. It is reported, because the
-distance between the two grids is the discretisation error and the honest place
-for it is in the output.
+an arrangement rather than the discrete optimum. It is reported anyway, since
+the distance between the two grids is the discretisation error and the honest
+place for it is in the output.
 
-**Which brackets exist depends on which endpoints are finite, and the two cases
-are not symmetric for a loss.** The worst case's right-endpoint grid needs
-``q(1)``, so it exists only for a loss bounded above — which a uniform loss is
-and a Pareto, exponential or normal loss is not. The best case's left-endpoint
-grid needs ``q(0)``, so it exists for any loss bounded below, which all three of
-Pareto, exponential and uniform are and a normal is not. A normal loss gets
-neither grid check and both proofs; a Pareto loss gets the best case's.
+**The gap between the two kinds of bound splits exactly in two, and most of it
+is usually arithmetic rather than dependence.** The mean row sum is invariant
+under rearrangement — every column keeps its own values — and it is precisely
+the left-endpoint Riemann sum of the same tail mean the inequality uses
+exactly. So the distance from the attained bound up to the proved one is
+``(exact tail sum - mean row sum) + (mean row sum - minimum row sum)``, the
+first term pure quadrature and the second the tail genuinely refusing to mix.
+They are not the same size. On eight exponential marginals the whole gap is
+0.0667, of which **0.0631 is the grid and 0.0036 the dependence**; reading the
+raw ratio of the two bounds as a statement about couplings would attribute 95%
+of it to the wrong thing. Subtracting only the measured non-mixability from the
+exact bound removes the grid from the answer, and that corrected figure is what
+the superadditivity ratios above are computed from.
 
 **The exact oracle is complete mixability.** A distribution is
 ``n``-completely mixable when ``n`` copies of it admit a coupling whose sum is
-constant, and the uniform distribution is completely mixable for every ``n >=
-2``. The conditional tail of a uniform loss above its ``alpha`` quantile is
-again uniform, so for uniform marginals the flat arrangement is attainable and
-the worst case **equals** the sum of the tail means exactly — the inequality
-above is tight, with a closed form ``d (1 + alpha) / 2`` on the unit interval.
-The lower tail is uniform too, so the best case is exactly ``d alpha / 2``.
-Both are reproduced here to within one grid step, which is the only way to know
-the rearrangement is finding the arrangement and not merely a plausible number.
+constant, and the uniform distribution is completely mixable for every
+``n >= 2``. The conditional tail of a uniform loss above its ``alpha`` quantile
+is again uniform, so the flat arrangement is attainable and the worst case
+**equals** the sum of the tail means exactly, with the closed form
+``d (1 + alpha) / 2`` on the unit interval. The lower tail is uniform too, so
+the best case is exactly ``d alpha / 2``.
 
-Away from uniform the inequality is slack, and by how much is a measurement
-rather than a guess. At the 99% level with 2000 tail points, exponential
-marginals reach 94.5% of the sum of expected shortfalls at two positions,
-99.58% at four and 99.96% at eight; Pareto marginals with tail index 2 reach
-70.6%, 86.3%, 93.1% and 95.8% at two, four, eight and sixteen. The bound is
-asymptotically sharp in the number of positions and badly slack at two, which
-is the opposite of the way a bound is usually assumed to behave.
+Reproducing those is what distinguishes a rearrangement that is working from a
+plausible number, and it exposes something the literature's error bounds do not
+mention. **Whether the grid can flatten at all is a divisibility question.** At
+512 cells the corrected estimate recovers ``d (1 + alpha) / 2`` to 2.2e-16 at
+two positions, 4.4e-16 at four, 2.7e-15 at eight and 1.1e-14 at sixteen — every
+one a divisor of 512 — and to 2.9e-05 at three and five positions, which is one
+grid step and the best any arrangement of 512 points into three equal row sums
+can do. The attained bound itself is one to two steps below the closed form at
+every count, falling exactly as one over the number of cells: six halvings from
+64 cells to 2048 give a ratio of 2.00 each time.
+
+**Which brackets exist depends on which endpoints are finite, and for a loss
+the two ends are not symmetric.** The worst case's right-endpoint grid needs
+``q(1)``, so it exists only for a loss bounded above — a uniform loss is, and a
+Pareto, exponential or normal loss is not. The best case's left-endpoint grid
+needs ``q(0)``, so it exists for a loss bounded below, which all of uniform,
+exponential and Pareto are. A normal loss gets neither grid and both proofs.
 
 **The algorithm does not always settle, and the stopping rule is on the
-quantity asked about.** For three and five uniform columns the sweeps cycle
-without a fixed point, visiting the same objective value repeatedly; a rule
-that waits for the columns to stop moving would run to the iteration cap and
-report failure on a problem it had already solved to one grid step. The rule
-here is patience on the objective: stop when the best minimum row sum seen has
-not improved for a fixed number of sweeps, and return that best — which belongs
-to an arrangement that was actually visited, so it stays attained.
+quantity asked about.** Three and five uniform columns cycle without a fixed
+point, revisiting the same objective; a rule that waited for the columns to
+stop moving would run to the sweep cap and report failure on a problem already
+solved to one grid step, while the divisible counts settle in five sweeps. The
+rule here is patience on the objective: stop when the best minimum row sum seen
+has not improved for a few sweeps, and return that best, which belongs to an
+arrangement that was actually visited and so stays attained.
 """
 
 from __future__ import annotations
@@ -94,12 +117,14 @@ from .distributions import normal_ppf
 from .parametric import normal_tail_mean
 
 #: Tail points per marginal when the caller does not choose. Large enough that
-#: the uniform oracle is reproduced to 1e-4 at eight positions and small enough
-#: that a five-position problem rearranges in well under a second.
+#: the corrected estimate is exact to rounding on the divisible uniform counts
+#: and small enough that a five-position problem rearranges in well under a
+#: second.
 DEFAULT_TAIL_POINTS = 1024
 
-#: Sweeps without an improvement in the objective before stopping. Three is
-#: enough to get past the two-sweep cycles the uniform grids fall into.
+#: Sweeps without an improvement in the objective before stopping. Enough to get
+#: past the cycles the non-divisible uniform grids fall into, which show up as
+#: nine or ten sweeps against five for a grid that flattens.
 DEFAULT_SWEEP_PATIENCE = 4
 
 #: Hard cap on sweeps, so a cycling problem terminates.
@@ -475,25 +500,70 @@ class WorstCase:
         return self.gap / abs(self.upper)
 
     @property
+    def discretisation(self) -> float:
+        """The part of :attr:`gap` that is the grid rather than the dependence.
+
+        The mean row sum is the tail mean evaluated as a left-endpoint Riemann
+        sum, and the bound above is the same quantity exactly, so the difference
+        is the quadrature error and nothing else. It falls like one over the
+        number of points and has no dependence content at all.
+        """
+        return self.upper - self.arrangement.mean
+
+    @property
+    def mixing_gap(self) -> float:
+        """The part of :attr:`gap` that is the tail refusing to mix.
+
+        What the rearrangement could not flatten, measured against the mean row
+        sum it cannot move. Adding this to :attr:`discretisation` returns
+        :attr:`gap` identically, so the two readings partition it.
+        """
+        return self.arrangement.mean - self.lower
+
+    @property
+    def estimate(self) -> float:
+        """The bound above, less only the non-mixability that was measured.
+
+        **Not a bound in either direction**, and the reason to have it is that
+        :attr:`lower` is held back by the quadrature rather than by the problem.
+        Taking the exact sum of expected shortfalls and subtracting only
+        :attr:`mixing_gap` removes the grid from the answer. Where the
+        rearrangement reaches a flat tail this is exact to rounding: on eight
+        uniform marginals at 512 points it recovers the closed form to 1.8e-15
+        against the 7.8e-05 that :attr:`lower` is short by.
+        """
+        return self.upper - self.mixing_gap
+
+    @property
     def superadditivity(self) -> float:
         """The worst case over the comonotonic coupling.
 
         Above one whenever value at risk fails to be subadditive on these
-        marginals, which is almost always. Computed from :attr:`lower`, so it is
-        itself a bound from below on the real ratio.
+        marginals, which is almost always. Computed from :attr:`estimate`, since
+        the grid error in :attr:`lower` would otherwise be read as diversification.
         """
         if self.comonotonic == 0.0:
             return math.inf
-        return self.lower / self.comonotonic
+        return self.estimate / self.comonotonic
 
-    def mixes(self, tolerance: float = 1e-9) -> bool:
-        """Whether the inequality is tight to ``tolerance``, relatively.
+    def mixes(self, tolerance: float | None = None) -> bool:
+        """Whether the rearrangement flattened the discretised tail.
 
-        True exactly when the discretised tail mixed completely, which for a
-        uniform marginal it does at every number of positions and for a Pareto
-        or exponential marginal it does not at any.
+        Tested on :attr:`mixing_gap` relative to the mean row sum, not on
+        :attr:`gap`, because the quadrature error in the latter is a property of
+        the grid and would make every marginal look non-mixable at a tight
+        enough tolerance.
+
+        The default tolerance is two grid steps' worth, ``2 / points``. A grid of
+        ``N`` points cannot in general be partitioned into flat rows unless the
+        arithmetic works out — eight uniform columns at 512 points flatten to
+        1.8e-15 and three flatten only to one step — so a tolerance below one
+        step asks a question about arithmetic rather than about the tail.
         """
-        return self.relative_gap <= tolerance
+        limit = 2.0 / self.arrangement.points if tolerance is None else tolerance
+        if self.arrangement.mean == 0.0:
+            return self.mixing_gap <= limit
+        return self.mixing_gap / abs(self.arrangement.mean) <= limit
 
 
 @dataclass(frozen=True)
@@ -527,11 +597,39 @@ class BestCase:
         return self.gap / abs(self.lower)
 
     @property
+    def discretisation(self) -> float:
+        """The grid's share of :attr:`gap`.
+
+        The mean row sum here is the lower tail mean as a *right*-endpoint
+        Riemann sum, which overstates it, so the difference from the exact bound
+        below is quadrature error and the sign works out the same way round as
+        in :class:`WorstCase`.
+        """
+        return self.arrangement.mean - self.lower
+
+    @property
+    def mixing_gap(self) -> float:
+        """The lower tail's share of :attr:`gap`: what would not flatten."""
+        return self.upper - self.arrangement.mean
+
+    @property
+    def estimate(self) -> float:
+        """The exact bound below plus only the measured non-mixability."""
+        return self.lower + self.mixing_gap
+
+    @property
     def subadditivity(self) -> float:
         """The best case over the comonotonic coupling, which is below one."""
         if self.comonotonic == 0.0:
             return math.inf
-        return self.upper / self.comonotonic
+        return self.estimate / self.comonotonic
+
+    def mixes(self, tolerance: float | None = None) -> bool:
+        """Whether the rearrangement flattened the discretised lower tail."""
+        limit = 2.0 / self.arrangement.points if tolerance is None else tolerance
+        if self.arrangement.mean == 0.0:
+            return self.mixing_gap <= limit
+        return self.mixing_gap / abs(self.arrangement.mean) <= limit
 
 
 @dataclass(frozen=True)
@@ -555,6 +653,16 @@ class Bounds:
     def enclosing(self) -> tuple[float, float]:
         """The interval the proofs put the whole range inside."""
         return (self.best.lower, self.worst.upper)
+
+    @property
+    def estimated(self) -> tuple[float, float]:
+        """The two corrected estimates, with the grid taken out of both ends.
+
+        Neither end is a bound. It is the interval to quote when the question is
+        how wide the dependence uncertainty actually is rather than how wide it
+        can be proved to be.
+        """
+        return (self.best.estimate, self.worst.estimate)
 
     @property
     def ratio(self) -> float:
