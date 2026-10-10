@@ -26,6 +26,7 @@ from typing import Any, TextIO
 
 from . import __version__
 from .backtest import validate
+from .bounds import dependence_bounds, normal_loss
 from .contributions import (
     diversification_ratio,
     effective_bets,
@@ -2055,6 +2056,120 @@ def command_stress(arguments: argparse.Namespace, stream: TextIO) -> dict[str, A
     return payload
 
 
+def command_bounds(arguments: argparse.Namespace, stream: TextIO) -> dict[str, Any]:
+    """How far value at risk can move on these marginals without a correlation.
+
+    Every other command here answers with one number because it has been told
+    what the dependence is. This one fits a normal loss to each column on its
+    own and then refuses to say anything about how the columns move together,
+    which turns the answer into an interval. The covariance-based figure is
+    printed beside it, and the thing to look at is where in the interval it
+    falls: a model is a point inside a range this wide, and the range is
+    available without the model.
+
+    The interval printed is the attained one, whose ends are both the value at
+    risk of a coupling that was constructed. The proved one is wider at the
+    bottom, because the inequality below the best case is reachable only in the
+    limit, and it is reported too rather than quietly dropped.
+    """
+    parsed = read_table(arguments.returns)
+    panel = parsed.panel
+    weights = parse_weights(arguments.weights, panel)
+    marginals = []
+    for index, weight in enumerate(weights):
+        series = panel.column(index)
+        if weight == 0.0:
+            continue
+        # A position's loss is minus its weighted return, so the loss mean
+        # flips sign with the weight and the volatility takes its magnitude.
+        marginals.append(
+            normal_loss(
+                -weight * series.mean,
+                abs(weight) * series.stdev(),
+                label=series.name,
+            )
+        )
+    if not marginals:
+        raise InputError("every weight is zero, so there is no book to bound")
+
+    bounds = dependence_bounds(
+        marginals,
+        confidence=arguments.confidence,
+        points=arguments.points,
+    )
+    covariance = covariance_of(panel, shrink=arguments.shrink)
+    fitted = portfolio_risk(weights, covariance, confidence=arguments.confidence)
+    low, high = bounds.attainable
+    span = high - low
+    position = (fitted.value_at_risk - low) / span if span > 0.0 else 0.0
+    payload = {
+        "observations": panel.observations,
+        "assets": panel.assets,
+        "positions": len(marginals),
+        "confidence": arguments.confidence,
+        "points": arguments.points,
+        "fitted_value_at_risk": fitted.value_at_risk,
+        "best_case": bounds.best.upper,
+        "comonotonic": bounds.comonotonic,
+        "worst_case": bounds.worst.lower,
+        "proved_floor": bounds.best.lower,
+        "proved_ceiling": bounds.worst.upper,
+        "worst_case_estimate": bounds.worst.estimate,
+        "best_case_estimate": bounds.best.estimate,
+        "ratio": bounds.ratio,
+        "superadditivity": bounds.worst.superadditivity,
+        "subadditivity": bounds.best.subadditivity,
+        "fitted_position_in_range": position,
+        "worst_mixing_gap": bounds.worst.mixing_gap,
+        "worst_discretisation": bounds.worst.discretisation,
+        "worst_sweeps": bounds.worst.arrangement.sweeps,
+        "worst_settled": bounds.worst.arrangement.settled,
+    }
+    if arguments.json:
+        return payload
+    print(
+        f"{len(marginals)} positions over {panel.observations} periods, "
+        f"{arguments.confidence:.1%} confidence, {arguments.points} tail cells\n",
+        file=stream,
+    )
+    fitted_ratio = fitted.value_at_risk / bounds.comonotonic
+    table(
+        [
+            ["coupling", "value at risk", "against comonotonic"],
+            [
+                "best case (attained)",
+                percent(bounds.best.upper),
+                f"{bounds.best.subadditivity:.3f}",
+            ],
+            ["fitted covariance", percent(fitted.value_at_risk), f"{fitted_ratio:.3f}"],
+            ["comonotonic", percent(bounds.comonotonic), "1.000"],
+            [
+                "worst case (attained)",
+                percent(bounds.worst.lower),
+                f"{bounds.worst.superadditivity:.3f}",
+            ],
+        ],
+        stream,
+    )
+    print(
+        f"\nthe marginals alone leave value at risk a factor of {bounds.ratio:.2f} wide; "
+        f"the fitted number sits {position:.0%} of the way up that range",
+        file=stream,
+    )
+    print(
+        f"proved to lie in [{percent(bounds.best.lower)}, {percent(bounds.worst.upper)}], "
+        f"which is wider because the bound below the best case is only approached",
+        file=stream,
+    )
+    print(
+        f"of the {percent(bounds.worst.gap)} between the attained worst case and its proof, "
+        f"{percent(bounds.worst.discretisation)} is the tail grid and "
+        f"{percent(bounds.worst.mixing_gap)} is the tail not mixing",
+        file=stream,
+    )
+    return payload
+
+
 COMMANDS = {
     "risk": command_risk,
     "contributions": command_contributions,
@@ -2071,6 +2186,7 @@ COMMANDS = {
     "spectrum": command_spectrum,
     "portfolio": command_portfolio,
     "stress": command_stress,
+    "bounds": command_bounds,
 }
 
 
@@ -2476,6 +2592,38 @@ def build_parser() -> argparse.ArgumentParser:
         help="one loss level; multiples of the mean if omitted",
     )
     loss.add_argument("--top", type=int, default=10, help="how many contributions to print")
+
+    limits = subparsers.add_parser(
+        "bounds",
+        help="the range value at risk can take when the dependence is unknown",
+        description=(
+            "Fits a normal loss to each column separately and then says nothing "
+            "about how the columns move together, which turns value at risk from "
+            "a number into an interval. Both ends are the value at risk of a "
+            "coupling that is constructed rather than assumed, and the "
+            "covariance-based figure is printed beside them so it can be read as "
+            "what it is: one point inside a range that is available without it. "
+            "Value at risk is not subadditive, so the top of the range is above "
+            "the comonotonic coupling, not equal to it."
+        ),
+    )
+    limits.add_argument("returns", type=Path, help="CSV of returns")
+    limits.add_argument(
+        "--weights", default=None, help="portfolio weights; equal weights if omitted"
+    )
+    limits.add_argument("--confidence", type=float, default=0.99)
+    limits.add_argument(
+        "--points",
+        type=int,
+        default=512,
+        help="tail cells per marginal; the attained bounds tighten as one over this",
+    )
+    limits.add_argument(
+        "--shrink",
+        type=float,
+        default=0.0,
+        help="shrinkage for the covariance the fitted comparison uses",
+    )
 
     stressed = subparsers.add_parser(
         "stress",

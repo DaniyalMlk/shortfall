@@ -1511,6 +1511,109 @@ rising to 65% in the tail — an error growing as the tail thins, which is exact
 the shape of failure the saddlepoint exists to avoid. It cannot be told from a
 method that simply does not work, except against something exact.
 
+## The range, when no dependence is named
+
+Every estimator above answers with a number because it has been told how the
+positions move together. Name nothing, keep only the marginal loss
+distributions, and the answer becomes an interval — a computable one, with both
+ends attained by couplings that are constructed rather than assumed.
+
+```python
+from shortfall import dependence_bounds, exponential_loss, normal_loss, pareto_loss
+
+book = [
+    normal_loss(0.0, 0.02, label="equity"),
+    exponential_loss(0.015, label="credit"),
+    pareto_loss(2.5, 0.004, label="operational"),
+]
+bounds = dependence_bounds(book, confidence=0.99)
+
+print(f"{bounds.best.upper:.4%} to {bounds.worst.lower:.4%}")   # 5.0543% to 17.1541%
+print(f"comonotonic {bounds.comonotonic:.4%}")                  # comonotonic 14.0843%
+print(f"a factor of {bounds.ratio:.2f}")                        # a factor of 3.39
+```
+
+Three marginals, one level, and value at risk is free to be anywhere across a
+factor of 3.39. Note where the comonotonic coupling falls: **not at the top**.
+Value at risk is not subadditive, so lining every loss up to be large together
+is not the worst thing the dependence can do — a coupling that makes the tail
+sum flat rather than extreme pushes the quantile higher still, and here it is
+1.22 times the comonotonic figure.
+
+The command line puts the covariance-based number inside the range it is one
+point of:
+
+```console
+$ shortfall bounds examples/returns.csv --confidence 0.99
+4 positions over 1260 periods, 99.0% confidence, 512 tail cells
+
+coupling               value at risk  against comonotonic
+---------------------  -------------  -------------------
+best case (attained)          0.043%                0.014
+fitted covariance             1.725%                0.680
+comonotonic                   2.537%                1.000
+worst case (attained)         2.897%                1.143
+```
+
+### Two of the four bounds are proofs and two are arrangements
+
+The bound above the worst case is an inequality and nothing else:
+`VaR <= ES` under any coupling, and expected shortfall is subadditive, so the
+worst case is at most the sum of the marginals' own expected shortfalls.
+Symmetrically, the sum of the lower tail means lies below the best case. Both
+are exact closed forms for the marginals built here, which is why each marginal
+carries its tail means rather than having them integrated off its quantile
+function.
+
+The other two ends come from the rearrangement algorithm: discretise each tail
+onto equiprobable cells, then repeatedly replace one column with the
+arrangement that runs against the sum of the others. The minimum row sum is the
+value at risk of an explicit coupling, so it is attained — provided the grid
+understates each marginal, which the left-endpoint one does. The right-endpoint
+grid is reported but is **not** a bound, because the algorithm returns an
+arrangement and not the discrete optimum, and saying so is cheaper than being
+wrong about it.
+
+### The oracle, and the divisibility problem it exposed
+
+The uniform distribution is completely mixable, so uniform marginals have the
+closed forms `d (1 + alpha) / 2` and `d alpha / 2` for the two cases. At 512
+cells the corrected estimate reproduces the first to between 2.2e-16 and
+1.1e-14 at two, four, eight and sixteen positions — every one a divisor of 512
+— and to 2.9e-05 at three and five, which is one grid step and the best any
+arrangement of 512 points into three equal row sums can do. Whether the tail
+can be flattened at all is partly a question about arithmetic, which is not
+something the published error bounds mention.
+
+### Most of the gap is the grid, not the dependence
+
+The mean row sum survives any rearrangement, and it is exactly the
+left-endpoint Riemann sum of the tail mean the proof uses exactly. So the
+distance from the attained bound to the proved one splits into quadrature plus
+non-mixability with no residue. They are not the same size: on eight
+exponential marginals the gap is 0.0667, of which **0.0631 is the grid and
+0.0036 the dependence**. Reading the raw ratio of the two bounds would put 95%
+of it down to the wrong cause.
+
+### What the superadditivity is worth
+
+On Pareto marginals with tail index 2 at the 99% level the worst case runs
+1.476 times the comonotonic coupling at two positions, 1.791 at four, 1.927 at
+eight, 1.985 at sixteen and 1.9997 at thirty-two, approaching the limit
+`theta / (theta - 1) = 2`. Sweep the index at eight positions and it reaches
+2.712 against a limit of 3 at index 1.5, 1.927 against 2, 1.488 against 1.5 and
+1.249 against 1.25: the lighter the tail, the sooner the limit arrives.
+Exponential marginals cap at 1.2171, which is their own ratio of expected
+shortfall to value at risk at that level.
+
+### Which bracket exists is not symmetric
+
+The worst case's reported grid needs the quantile at one, so it exists only for
+a loss bounded above. The best case's needs the quantile at zero, so it exists
+for a loss bounded below. A uniform loss has both, a Pareto or exponential loss
+only the second, a normal loss neither — and the inequalities hold in every
+case, which is why they are what the interval is bracketed by.
+
 ## A view imposed by reweighting, not by filtering
 
 Every estimator above reads a sample and takes it as given, which leaves no way

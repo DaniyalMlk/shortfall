@@ -1656,3 +1656,66 @@ def test_stress_refuses_a_view_it_cannot_place(tmp_path: Path) -> None:
     assert run("stress", str(path), "--below", "-5.0", "--multiple", "2")[0] == 2
     # And a mean outside the range the scenarios span is refused by the solver.
     assert run("stress", str(path), "--on", "alpha", "--mean", "5.0")[0] == 2
+
+
+def test_bounds_puts_the_fitted_number_inside_the_attained_range(tmp_path: Path) -> None:
+    """The point of the command: a covariance figure is one point in a range.
+
+    Asserted as an ordering rather than as numbers, since the three series the
+    helper writes are a factor model and the range they admit depends on the
+    seed. What cannot depend on the seed is that the worst case is above the
+    comonotonic coupling, which is value at risk failing to be subadditive, and
+    that the fitted figure lies between the two attained ends.
+    """
+    path = sample_file(tmp_path / "r.csv")
+    code, output = run("bounds", str(path), "--points", "128")
+    assert code == 0
+    assert "best case (attained)" in output
+    assert "worst case (attained)" in output
+    assert "comonotonic" in output
+    assert "the tail not mixing" in output
+
+    code, text = run("--json", "bounds", str(path), "--points", "128")
+    assert code == 0
+    payload = json.loads(text)
+    assert payload["positions"] == 3
+    assert payload["best_case"] < payload["fitted_value_at_risk"] < payload["worst_case"]
+    assert payload["comonotonic"] < payload["worst_case"]
+    assert payload["superadditivity"] > 1.0
+    assert payload["subadditivity"] < 1.0
+    assert payload["proved_floor"] <= payload["best_case"]
+    assert payload["proved_ceiling"] >= payload["worst_case"]
+    assert 0.0 <= payload["fitted_position_in_range"] <= 1.0
+    assert payload["worst_settled"] is True
+    assert payload["worst_discretisation"] >= 0.0
+    assert payload["worst_mixing_gap"] >= 0.0
+
+
+def test_bounds_tightens_as_cells_are_added(tmp_path: Path) -> None:
+    """More cells can only raise the attained worst case, never lower it."""
+    path = sample_file(tmp_path / "r.csv")
+    attained = []
+    for cells in ("64", "256", "1024"):
+        code, text = run("--json", "bounds", str(path), "--points", cells)
+        assert code == 0
+        attained.append(json.loads(text)["worst_case"])
+    assert attained[0] < attained[1] < attained[2]
+
+
+def test_bounds_refuses_a_book_with_nothing_in_it(tmp_path: Path) -> None:
+    path = sample_file(tmp_path / "r.csv")
+    assert run("bounds", str(path), "--weights", "0,0,0")[0] == 2
+    assert run("bounds", str(path), "--confidence", "1.0")[0] == 2
+    assert run("bounds", str(path), "--points", "1")[0] == 2
+
+
+def test_bounds_drops_a_zero_weight_position_rather_than_bounding_nothing(
+    tmp_path: Path,
+) -> None:
+    """A zero weight contributes no loss, and a degenerate normal has no
+    quantile function, so the position leaves the book instead of entering it
+    with a volatility of zero."""
+    path = sample_file(tmp_path / "r.csv")
+    code, text = run("--json", "bounds", str(path), "--weights", "0.5,0.5,0")
+    assert code == 0
+    assert json.loads(text)["positions"] == 2

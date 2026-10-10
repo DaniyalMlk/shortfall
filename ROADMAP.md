@@ -909,3 +909,73 @@ unconverged. A strict one terminates and stops while the residual is still
 reaches the last bit of a double first. The stopping criterion belongs on the
 quantity the caller asked about, and once the residual is allowed to justify a
 step the same solves reach 1.4e-16.
+
+## Phase 23 — The range value at risk can take with no dependence named
+
+Every module above answers with a number because it has been told what the
+dependence is — a covariance matrix, a fitted copula, a panel that lived it.
+The answer is then conditional on that, and the usual way of saying so is a
+footnote. This phase computes the interval instead: given the marginal loss
+distributions and nothing else, how far apart can value at risk be?
+
+- [x] The classical sandwich, both halves of it proofs rather than numerics —
+      the sum of the marginals' expected shortfalls above the worst case, the
+      sum of their lower tail means below the best case
+- [x] Marginals that carry their tail means exactly, so neither proof inherits
+      a quadrature error, with uniform, exponential, Pareto and normal built in
+- [x] The rearrangement algorithm, with the objective and the stopping rule on
+      the quantity the caller asked about rather than on the columns settling
+- [x] Both discretisations run, so the grid's contribution is reported rather
+      than absorbed, and the grid that does not exist returned as nothing
+- [x] The gap split exactly into a quadrature part and a mixing part, using the
+      invariance of the mean row sum under rearrangement
+- [x] The superadditivity of value at risk measured across position count and
+      tail weight, against the limits the marginals imply
+- [x] A command-line route that prints the covariance-based figure inside the
+      interval it is one point of
+- [ ] A first release on the package index
+
+### The oracle is complete mixability, and it exposed a divisibility problem
+
+The uniform distribution is completely mixable, so for uniform marginals the
+worst case is exactly `d (1 + alpha) / 2` and the best case exactly
+`d alpha / 2`. Reproducing those is the only way to know the rearrangement is
+finding the arrangement rather than returning a plausible number — and doing it
+showed something the error bounds do not mention. At 512 cells the corrected
+estimate recovers the closed form to between 2.2e-16 and 1.1e-14 at two, four,
+eight and sixteen positions, every one a divisor of 512, and to 2.9e-05 at
+three and five, which is one grid step and the best any arrangement of 512
+points into three equal row sums can achieve. The attained bound itself sits
+one to two cells below the closed form at every count, falling as one over the
+cell count: five halvings each give a ratio of 2.00.
+
+### Most of the gap between the two kinds of bound is arithmetic
+
+Reading the ratio of the attained bound to the proved one as a statement about
+couplings is wrong, and by a lot. The mean row sum cannot be moved by a
+rearrangement and is precisely the left-endpoint Riemann sum of the same tail
+mean the proof uses exactly, which splits the gap into quadrature plus
+non-mixability with no residue. On eight exponential marginals the whole gap is
+0.0667, of which 0.0631 is the grid and 0.0036 the dependence: 95% of it
+attributable to the wrong cause by the naive reading.
+
+### What the superadditivity is worth
+
+On Pareto marginals with tail index 2 at the 99% level the worst case runs
+1.476 times the comonotonic coupling at two positions, 1.791 at four, 1.927 at
+eight, 1.985 at sixteen and 1.9997 at thirty-two, against the limit
+`theta / (theta - 1) = 2`. Sweeping the index at eight positions gives 2.712
+against a limit of 3 at index 1.5, then 1.927 against 2, 1.488 against 1.5 and
+1.249 against 1.25 — the lighter the tail, the sooner the limit arrives.
+Exponential marginals cap at 1.2171, their own ratio of expected shortfall to
+value at risk. A book's value at risk can nearly double with no marginal
+changing.
+
+### Which bracket exists is not symmetric
+
+The worst case's overstating grid needs the quantile at one, so it exists only
+for a loss bounded above; the best case's understating grid needs the quantile
+at zero, so it exists for a loss bounded below. A uniform loss has both, a
+Pareto or exponential loss only the second, a normal loss neither. The
+inequalities hold in every case, which is why they are what the output is
+bracketed by and the grids are only reported.
