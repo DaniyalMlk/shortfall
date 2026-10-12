@@ -1747,6 +1747,82 @@ on the way out of the feasible region. The residual distinguishes them, and the
 first version of this module reported two disjoint sets each asked for a
 probability of 0.6 as linearly dependent views.
 
+## Which directions of a covariance estimate are noise
+
+`sample_covariance` is unbiased and, at the dimensions a book has, close to
+useless: sixty assets and a hundred and twenty observations is 1,830 parameters
+from 240 days. `ledoit_wolf` repairs it by pulling the whole matrix towards a
+target, which is one scalar decision applied to every direction. This asks the
+other question — which directions carry information at all.
+
+```bash
+shortfall clean book.csv --compare
+```
+
+```
+30 assets over 120 periods, q = 0.250, noise band [0.2500, 2.2500]
+
+eigenvalue  inside the band  implied strength
+----------  ---------------  ----------------
+5.9795                   no             4.676
+5.1683                   no             3.853
+2.3955                   no             0.852
+1.2547                  yes                 -
+
+3 of 30 directions are above the band; the other 27 carry 54.9% of the trace
+```
+
+### The band is where noise lives, and it is wide
+
+For `T` observations of `N` independent unit-variance series, the eigenvalues of
+the sample correlation matrix fill `[(1 - sqrt(q))**2, (1 + sqrt(q))**2]` with
+the Marchenko-Pastur density, `q = N / T`. At `q = 0.5` that is `[0.086, 2.914]`.
+So an eigenvalue of two and a half in a sixty-by-hundred-and-twenty estimate is
+not a factor; it is what noise does. `clip_spectrum` flattens everything inside
+the band to its average — preserving the trace exactly, since the total variance
+was measured well even where its distribution was not — and works on the
+correlation matrix, because the law is stated for unit variances and applying it
+to a covariance means fitting a scale to the bulk.
+
+### A factor can be absent from the estimate rather than poorly estimated in it
+
+Above `sqrt(q)` a factor of strength `s` puts the largest sample eigenvalue at
+`(1 + s)(1 + q / s)` — detectable and biased upward, 2.3625 against a truth of
+1.8 at `q = 0.25` and `s = 0.8`, 31% high, which `implied_spike` inverts. Below
+`sqrt(q)` it puts it at the band edge *whatever s is*, and the eigenvector's
+squared overlap with the truth goes to zero. Simulated at `q = 0.5`, a factor
+adding 40% to one direction's variance leaves its panel's largest eigenvalue
+exactly where a panel with no factor leaves its own.
+
+`detection_threshold` is therefore the honest output, and the reverse is worth
+knowing too: the same three factors over the same hundred and twenty periods are
+two factors at 24 assets and three at 30, because a factor's eigenvalue grows
+with the number of assets loading on it and the band only like `sqrt(q)`.
+Widening a panel can reveal a factor a narrower one could not see.
+
+### Whether cleaning beats shrinking, and why two of the three obvious tests cannot say
+
+Forty assets, eighty training observations, true variance of each estimator's
+minimum-variance portfolio in units of 1e-4:
+
+| truth | sample | shrunk | clipped | equal weight | truth |
+|---|---|---|---|---|---|
+| isotropic | 0.0538 | 0.0257 | 0.0256 | 0.0250 | 0.0250 |
+| one factor, equal loadings | 1.4045 | 0.7605 | 0.8043 | 0.6650 | 0.6650 |
+| three factors, unequal loadings | 0.0604 | 0.0371 | 0.0291 | 0.0433 | 0.0267 |
+
+The fourth column is the control. When the truth treats the assets alike, equal
+weighting is *exactly* optimal — it matches the truth column to nine figures — so
+no covariance estimate can beat it and the first two rows measure nothing.
+Shrinkage winning the second row is a fact about a panel whose truth is the
+shrinkage target.
+
+Only the third row distinguishes the assets, and there cleaning closes 92.9% of
+the gap to the truth against shrinkage's 69.3% and equal weighting's 50.7%.
+Neither dominates, so `compare_estimators` returns a table rather than a
+recommendation — and the lesson is about benchmarks: the two panels anyone would
+reach for first are the two on which the question cannot be asked.
+
 ## Development
 
 ```bash

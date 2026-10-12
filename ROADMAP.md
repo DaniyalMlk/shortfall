@@ -979,3 +979,96 @@ at zero, so it exists for a loss bounded below. A uniform loss has both, a
 Pareto or exponential loss only the second, a normal loss neither. The
 inequalities hold in every case, which is why they are what the output is
 bracketed by and the grids are only reported.
+
+## Phase 24 — Which directions of a covariance estimate are noise
+
+- [x] The Marchenko-Pastur band and density, checked against quadrature
+- [x] Eigenvalue clipping on the correlation matrix, preserving the trace and
+      the diagonal exactly
+- [x] The detection threshold, and the statement that below it a factor leaves
+      no trace at all
+- [x] The upward bias of a detectable eigenvalue, and its inverse
+- [x] The limiting eigenvector overlap, which is zero below the threshold
+- [x] An out-of-sample comparison against the sample and shrunk estimators,
+      with equal weighting as the control
+- [x] A `clean` subcommand
+
+### The band is not a rule of thumb
+
+For `T` observations of `N` independent unit-variance series the eigenvalues of
+the sample correlation matrix do not cluster near one. With `q = N / T` they
+fill `[(1 - sqrt(q))**2, (1 + sqrt(q))**2]` with the Marchenko-Pastur density,
+which integrates to one and has mean one — both checked here by Simpson at four
+ratios rather than asserted. At `q = 0.5` the band runs from 0.086 to 2.914, so
+an eigenvalue of two and a half in a sixty-asset estimate from a hundred and
+twenty observations is not a factor carrying two and a half times its share of
+the variance. It is what pure noise produces, routinely.
+
+Cleaning replaces every eigenvalue inside the band with the average of that
+group. The average rather than zero, because the *total* variance was measured
+well even though its distribution across directions was not: the trace is
+preserved to rounding, and so is the diagonal of the covariance, because the
+rebuilt matrix is rescaled by the square roots of its own diagonal rather than
+having ones written into it — which also keeps it positive semidefinite, as
+overwriting would not.
+
+Working on the correlation matrix rather than the covariance is not tidiness.
+The law is stated for unit-variance series, so applying it to a covariance means
+fitting a scale to the bulk; the correlation matrix has that scale fixed at one.
+
+### A factor can be too small to be in the estimate at all
+
+Plant one factor of strength `s`, so the truth's largest eigenvalue is `1 + s`.
+Above `sqrt(q)` the sample's largest converges to `(1 + s)(1 + q / s)`: outside
+the band, detectable, and biased *upward* — at `q = 0.25` and `s = 0.8` the truth
+is 1.8 and the sample reads 2.3625, which is 31% high, and `implied_spike`
+inverts that map to ten figures.
+
+Below `sqrt(q)` the sample's largest converges to the band edge **regardless of
+s**, and the squared overlap of the sample eigenvector with the true one
+converges to zero. Simulated at `q = 0.5`: a factor adding 40% to one
+direction's variance leaves a largest eigenvalue inside the band, in the same
+place a panel with no factor at all puts its largest. The factor is not weakly
+estimated. It is absent, and nothing recovers it from this much data.
+
+That is the same lesson as the cap that reprices to 2.4e-15 at seven different
+correlations, in a new place: an estimator cannot report a parameter its data
+does not depend on, and the useful output is the threshold rather than a number.
+
+### More assets can reveal a factor that fewer assets hid
+
+Which runs against the instinct that more assets means more parameters and a
+worse estimate. The same three factors with the same loadings, over the same
+hundred and twenty periods: at 24 assets the weakest one's eigenvalue is 1.965
+against a band reaching 2.094, and the estimate has two factors in it; at 30
+assets the eigenvalue is 2.395 against a band reaching 2.250, and it has three.
+A factor's correlation-matrix eigenvalue grows with the number of assets loading
+on it and the band grows only like `sqrt(q)`, so widening a panel can bring a
+factor into view. Both directions are in the tests, because the band widening is
+the part that makes the result surprising.
+
+### Two of the three obvious tests cannot tell these estimators apart
+
+Forty assets, eighty training observations, the true variance of each
+estimator's minimum-variance portfolio in units of 1e-4:
+
+| truth | sample | shrunk | clipped | equal weight | truth |
+|---|---|---|---|---|---|
+| isotropic | 0.0538 | 0.0257 | 0.0256 | 0.0250 | 0.0250 |
+| one common factor, equal loadings | 1.4045 | 0.7605 | 0.8043 | 0.6650 | 0.6650 |
+| three factors, unequal loadings | 0.0604 | 0.0371 | 0.0291 | 0.0433 | 0.0267 |
+
+The fourth column is the control and it condemns the first two rows. When the
+truth treats the assets alike the equal-weight portfolio is *exactly* optimal —
+it matches the truth column to nine figures — so no covariance estimate can beat
+it and the comparison measures nothing. Shrinkage winning the second row by 5%
+is a fact about the panel, whose truth is the shrinkage target.
+
+Only the third row distinguishes the assets, and there cleaning closes 92.9% of
+the gap between the sample estimate and the truth, shrinkage 69.3% and equal
+weighting 50.7%. The sample estimate is worse than equal weighting on every row.
+
+So neither cleaning nor shrinking dominates, `compare_estimators` returns a
+table rather than a recommendation, and the thing carried out of the phase is
+about benchmarks: the first two panels anyone would reach for are the two on
+which the question cannot be asked.
