@@ -57,17 +57,17 @@ true variance of the resulting minimum-variance portfolio in units of 1e-4:
 
 | truth | sample | shrunk | clipped | equal weight | truth |
 |---|---|---|---|---|---|
-| isotropic | 0.0506 | 0.0257 | 0.0257 | 0.0250 | 0.0250 |
-| one common factor, equal loadings | 1.3516 | 0.7615 | 0.8027 | 0.6650 | 0.6650 |
-| three factors, unequal loadings | 0.0561 | 0.0358 | 0.0299 | 0.0506 | 0.0274 |
+| isotropic | 0.0538 | 0.0257 | 0.0256 | 0.0250 | 0.0250 |
+| one common factor, equal loadings | 1.4045 | 0.7605 | 0.8043 | 0.6650 | 0.6650 |
+| three factors, unequal loadings | 0.0604 | 0.0371 | 0.0291 | 0.0433 | 0.0267 |
 
 The first two rows are rigged and the fourth column says so: when the truth is
 exchangeable across assets, the equal-weight portfolio is *exactly* optimal, so
 nothing is being estimated and the shrinkage target happens to be the truth.
 Shrinkage winning the second row by 5% is a statement about the test, not about
 the method. Only the third row has a truth that distinguishes assets, and there
-cleaning closes 91% of the gap between the sample estimate and the truth against
-shrinkage's 71%, while equal weighting closes 20%.
+cleaning closes 92.9% of the gap between the sample estimate and the truth
+against shrinkage's 69.3%, while equal weighting closes 50.7%.
 
 So neither dominates, :func:`compare_estimators` exists instead of a
 recommendation, and the lesson carried out of the phase is about the
@@ -395,10 +395,10 @@ def compare_estimators(
     Four ways, because the fourth is the one that catches a rigged comparison:
     the equal-weight portfolio is exactly optimal whenever the truth treats the
     assets alike, and on such a panel no covariance estimator can show anything.
-    On a truth with unequal loadings cleaning closes 91% of the gap between the
-    sample estimate and the truth against shrinkage's 71%; on an isotropic one
-    they tie and equal weighting beats both. Neither dominates, so this returns
-    a table rather than a recommendation.
+    On a truth with unequal loadings cleaning closes 92.9% of the gap between
+    the sample estimate and the truth against shrinkage's 69.3%; on an isotropic
+    one they tie and equal weighting beats both. Neither dominates, so this
+    returns a table rather than a recommendation.
     """
     if not 0.0 < split < 1.0:
         raise BadDimensions(f"the split must be strictly between zero and one, got {split!r}")
