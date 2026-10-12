@@ -95,7 +95,7 @@ from .linalg import (
 from .series import Panel, ReturnSeries, TooShort
 
 __all__ = [
-    "BadSpectrum",
+    "BadDimensions",
     "Cleaned",
     "OutOfSample",
     "clip_spectrum",
@@ -109,15 +109,20 @@ __all__ = [
 ]
 
 
-class BadSpectrum(ValueError):
-    """The dimensions do not admit the law this module rests on."""
+class BadDimensions(ValueError):
+    """The counts of assets and observations do not admit the law.
+
+    Not ``BadSpectrum``: :mod:`shortfall.spectral` already exports that name for
+    a weighting function that is not a spectral risk measure, which is a
+    different complaint about a different thing.
+    """
 
 
 def _ratio(assets: int, observations: int) -> float:
     if assets < 1:
-        raise BadSpectrum(f"a covariance needs at least one asset, got {assets}")
+        raise BadDimensions(f"a covariance needs at least one asset, got {assets}")
     if observations < 2:
-        raise BadSpectrum(
+        raise BadDimensions(
             f"the law is about a sample covariance, which needs at least two "
             f"observations; got {observations}"
         )
@@ -179,7 +184,7 @@ def spike_location(strength: float, assets: int, observations: int) -> float:
     """
     ratio = _ratio(assets, observations)
     if not strength > 0.0:
-        raise BadSpectrum(
+        raise BadDimensions(
             f"a factor's strength is the variance it adds and must be positive, "
             f"got {strength!r}"
         )
@@ -223,7 +228,7 @@ def eigenvector_overlap(strength: float, assets: int, observations: int) -> floa
     """
     ratio = _ratio(assets, observations)
     if not strength > 0.0:
-        raise BadSpectrum(
+        raise BadDimensions(
             f"a factor's strength is the variance it adds and must be positive, "
             f"got {strength!r}"
         )
@@ -396,7 +401,7 @@ def compare_estimators(
     a table rather than a recommendation.
     """
     if not 0.0 < split < 1.0:
-        raise BadSpectrum(f"the split must be strictly between zero and one, got {split!r}")
+        raise BadDimensions(f"the split must be strictly between zero and one, got {split!r}")
     total = panel.observations
     cut = int(total * split)
     if cut < 2 or total - cut < 2:
