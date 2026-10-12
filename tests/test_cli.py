@@ -1719,3 +1719,120 @@ def test_bounds_drops_a_zero_weight_position_rather_than_bounding_nothing(
     code, text = run("--json", "bounds", str(path), "--weights", "0.5,0.5,0")
     assert code == 0
     assert json.loads(text)["positions"] == 2
+
+
+# -- cleaning ----------------------------------------------------------------
+
+
+def factor_file(path: Path, *, assets: int = 24, periods: int = 120) -> Path:
+    """A panel with three factors and unequal loadings, which is the only kind
+    on which a covariance estimator comparison measures anything."""
+    rng = random.Random(21)
+    factors = [[rng.gauss(0.0, 1.0) for _ in range(periods)] for _ in range(3)]
+    loadings = [[rng.gauss(0.0, 0.5) for _ in range(3)] for _ in range(assets)]
+    lines = ["date," + ",".join(f"a{i}" for i in range(assets))]
+    for t in range(periods):
+        row = [f"2024-{(t % 12) + 1:02d}-{(t % 28) + 1:02d}"]
+        for i in range(assets):
+            common = sum(loadings[i][k] * factors[k][t] for k in range(3))
+            row.append(f"{0.01 * (common + rng.gauss(0.0, 1.0)):.8f}")
+        lines.append(",".join(row))
+    return write(path, "\n".join(lines) + "\n")
+
+
+def test_clean_finds_the_planted_factors_and_flattens_the_rest(tmp_path: Path) -> None:
+    code, out = run(
+        "--json", "clean", str(factor_file(tmp_path / "book.csv", assets=30))
+    )
+    assert code == 0
+    payload = json.loads(out)
+    assert payload["assets"] == 30
+    assert payload["ratio"] == pytest.approx(30 / 120)
+    assert payload["kept"] == 3
+    assert len(payload["implied_strengths"]) == 3
+    lower, upper = payload["noise_band"]
+    assert lower < upper
+    eigenvalues = payload["eigenvalues"]
+    assert eigenvalues == sorted(eigenvalues, reverse=True)
+    assert eigenvalues[2] > upper
+    assert eigenvalues[3] <= upper
+    assert 0.0 < payload["noise_fraction"] < 1.0
+
+
+def test_more_assets_can_reveal_a_factor_that_fewer_assets_hid(tmp_path: Path) -> None:
+    """The same three factors with the same loadings, drawn for 24 assets and
+    for 30. At 24 the weakest one's eigenvalue is 1.965 against a band reaching
+    2.094 and the estimate has two factors in it; at 30 the eigenvalue is 2.395
+    against a band reaching 2.250 and it has three.
+
+    Which is worth a test because it runs against the instinct that more assets
+    means more parameters and a worse estimate. A factor's correlation-matrix
+    eigenvalue grows with the number of assets loading on it, and the band grows
+    only like ``sqrt(q)``, so widening a panel can make a factor visible that
+    was invisible in a narrower one over exactly the same period."""
+    narrow = json.loads(
+        run("--json", "clean", str(factor_file(tmp_path / "narrow.csv", assets=24)))[1]
+    )
+    wide = json.loads(
+        run("--json", "clean", str(factor_file(tmp_path / "wide.csv", assets=30)))[1]
+    )
+    assert narrow["kept"] == 2
+    assert wide["kept"] == 3
+    assert narrow["eigenvalues"][2] < narrow["noise_band"][1]
+    assert wide["eigenvalues"][2] > wide["noise_band"][1]
+    # The band did widen; the eigenvalue simply grew faster.
+    assert wide["noise_band"][1] > narrow["noise_band"][1]
+    assert wide["detection_threshold"] > narrow["detection_threshold"]
+
+
+def test_clean_prints_the_threshold_as_the_thing_it_is(tmp_path: Path) -> None:
+    code, out = run("clean", str(factor_file(tmp_path / "book.csv")), "--show", "4")
+    assert code == 0
+    assert "noise band" in out
+    assert "whatever the factor's true size" in out
+    assert out.count("yes") + out.count("no") >= 4
+
+
+def test_clean_comparison_names_equal_weighting_as_the_control(
+    tmp_path: Path,
+) -> None:
+    code, out = run(
+        "clean", str(factor_file(tmp_path / "book.csv")), "--compare", "--show", "3"
+    )
+    assert code == 0
+    assert "equal weighting is the control, not a candidate" in out
+    for name in ("sample", "shrunk", "clipped", "equal weight"):
+        assert name in out
+
+
+def test_clean_comparison_beats_the_sample_estimate_on_this_panel(
+    tmp_path: Path,
+) -> None:
+    code, out = run(
+        "--json",
+        "clean",
+        str(factor_file(tmp_path / "book.csv", assets=24)),
+        "--compare",
+    )
+    assert code == 0
+    table = {
+        row["estimator"]: row for row in json.loads(out)["comparison"]
+    }
+    assert len(table) == 4
+    assert table["clipped"]["variance"] < table["sample"]["variance"]
+    assert table["clipped"]["concentration"] < table["sample"]["concentration"]
+    assert table["equal weight"]["concentration"] == pytest.approx(1.0 / 24.0)
+
+
+def test_clean_leaves_the_comparison_out_unless_asked(tmp_path: Path) -> None:
+    code, out = run("--json", "clean", str(factor_file(tmp_path / "book.csv")))
+    assert code == 0
+    assert json.loads(out)["comparison"] == []
+
+
+def test_clean_refuses_a_split_that_leaves_nothing_to_measure(tmp_path: Path) -> None:
+    code, out = run(
+        "clean", str(factor_file(tmp_path / "book.csv")), "--compare", "--split", "0.0"
+    )
+    assert code == 2
+    assert out == ""

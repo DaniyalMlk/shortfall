@@ -27,6 +27,12 @@ from typing import Any, TextIO
 from . import __version__
 from .backtest import validate
 from .bounds import dependence_bounds, normal_loss
+from .cleaning import (
+    clip_spectrum,
+    compare_estimators,
+    detection_threshold,
+    marchenko_pastur_edges,
+)
 from .contributions import (
     diversification_ratio,
     effective_bets,
@@ -2170,6 +2176,97 @@ def command_bounds(arguments: argparse.Namespace, stream: TextIO) -> dict[str, A
     return payload
 
 
+def command_clean(arguments: argparse.Namespace, stream: TextIO) -> dict[str, Any]:
+    """Which directions of this panel's covariance the data can distinguish.
+
+    The eigenvalues of the correlation matrix are compared against the band that
+    the ratio of assets to observations implies for pure noise, and the ones
+    inside it are flattened to their average. The count above the band is the
+    number of directions this much data can see at all, and the threshold beside
+    it is the smallest factor that could have left a trace: a direction carrying
+    less additional variance than that is not weakly estimated here, it is
+    absent, and no amount of cleaning recovers it.
+
+    The comparison at the end splits the file in two, builds a minimum-variance
+    portfolio on the first half and measures it on the second. Equal weighting
+    is in the table because it is the control: if it wins, the truth probably
+    treats these assets alike and no covariance estimator could have shown
+    anything on this panel.
+    """
+    parsed = read_table(arguments.returns)
+    panel = parsed.panel
+    cleaned = clip_spectrum(panel)
+    lower, upper = marchenko_pastur_edges(panel.assets, panel.observations)
+    threshold = detection_threshold(panel.assets, panel.observations)
+    comparison = compare_estimators(panel, split=arguments.split) if arguments.compare else ()
+    payload: dict[str, Any] = {
+        "assets": panel.assets,
+        "observations": panel.observations,
+        "ratio": panel.assets / panel.observations,
+        "noise_band": [lower, upper],
+        "detection_threshold": threshold,
+        "kept": cleaned.kept,
+        "noise_level": cleaned.noise_level,
+        "noise_fraction": cleaned.noise_fraction,
+        "eigenvalues": list(cleaned.observed),
+        "implied_strengths": list(cleaned.implied_strengths),
+        "comparison": [
+            {
+                "estimator": one.estimator,
+                "variance": one.variance,
+                "concentration": one.concentration,
+            }
+            for one in comparison
+        ],
+    }
+    if arguments.json:
+        return payload
+    print(
+        f"{panel.assets} assets over {panel.observations} periods, "
+        f"q = {panel.assets / panel.observations:.3f}, noise band "
+        f"[{lower:.4f}, {upper:.4f}]\n",
+        file=stream,
+    )
+    rows: list[list[str]] = [["eigenvalue", "inside the band", "implied strength"]]
+    strengths = cleaned.implied_strengths
+    for index, value in enumerate(cleaned.observed[: arguments.show]):
+        inside = "yes" if value <= upper else "no"
+        implied = f"{strengths[index]:.3f}" if index < len(strengths) else "-"
+        rows.append([f"{value:.4f}", inside, implied])
+    table(rows, stream)
+    print(
+        f"\n{cleaned.kept} of {panel.assets} directions are above the band; the other "
+        f"{panel.assets - cleaned.kept} carry {cleaned.noise_fraction:.1%} of the trace "
+        f"and are flattened to {cleaned.noise_level:.4f}",
+        file=stream,
+    )
+    print(
+        f"the smallest factor this much data could have detected adds "
+        f"{threshold:.3f} to a direction's variance; below that the largest sample "
+        f"eigenvalue sits at the band edge whatever the factor's true size",
+        file=stream,
+    )
+    if comparison:
+        print("", file=stream)
+        rows = [["estimator", "out-of-sample variance", "sum of squared weights"]]
+        for one in comparison:
+            rows.append(
+                [
+                    one.estimator,
+                    "singular" if one.variance is None else f"{one.variance:.3e}",
+                    f"{one.concentration:.4f}",
+                ]
+            )
+        table(rows, stream)
+        print(
+            "\nequal weighting is the control, not a candidate: it is exactly "
+            "optimal whenever the truth treats the assets alike, so if it wins "
+            "here then nothing about these estimators has been measured",
+            file=stream,
+        )
+    return payload
+
+
 COMMANDS = {
     "risk": command_risk,
     "contributions": command_contributions,
@@ -2187,6 +2284,7 @@ COMMANDS = {
     "portfolio": command_portfolio,
     "stress": command_stress,
     "bounds": command_bounds,
+    "clean": command_clean,
 }
 
 
@@ -2623,6 +2721,37 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.0,
         help="shrinkage for the covariance the fitted comparison uses",
+    )
+
+    cleaned = subparsers.add_parser(
+        "clean",
+        help="which directions of the covariance the data can distinguish",
+        description=(
+            "Compares the eigenvalues of this panel's correlation matrix against "
+            "the band that pure noise would produce at these dimensions, and "
+            "flattens the ones inside it. Reports the smallest factor the data "
+            "could have detected at all, which is the number the phase exists "
+            "for: a direction carrying less than that much extra variance leaves "
+            "no trace in the spectrum whatever its true size, so it is absent "
+            "from the estimate rather than poorly estimated in it. The optional "
+            "comparison splits the file and measures each estimator out of "
+            "sample, with equal weighting as the control."
+        ),
+    )
+    cleaned.add_argument("returns", type=Path, help="CSV of returns")
+    cleaned.add_argument(
+        "--show", type=int, default=10, help="how many eigenvalues to print"
+    )
+    cleaned.add_argument(
+        "--compare",
+        action="store_true",
+        help="also build a minimum-variance portfolio four ways and measure each",
+    )
+    cleaned.add_argument(
+        "--split",
+        type=float,
+        default=0.5,
+        help="the fraction of the file the comparison estimates on",
     )
 
     stressed = subparsers.add_parser(

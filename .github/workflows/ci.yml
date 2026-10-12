@@ -124,7 +124,25 @@ jobs:
           for i in range(6):
               assert abs(result.matrix[i][i] - unbiased[i][i]) < 1e-20
           assert result.diagnostics.positive_semidefinite
-          print(f"shrinkage intensity {result.intensity:.4f}, variances preserved")
+
+          # And the other estimator, whose identities are the trace and the
+          # diagonal. Six assets over forty observations puts q at 0.15, so
+          # the common factor is comfortably outside the band.
+          from shortfall import clip_spectrum, detection_threshold
+
+          cleaned = clip_spectrum(panel)
+          assert cleaned.kept >= 1, cleaned.observed
+          assert abs(sum(cleaned.cleaned) - 6.0) < 1e-9, sum(cleaned.cleaned)
+          # Relative, unlike the shrinkage check above: cleaning restores the
+          # diagonal by rescaling a rebuilt matrix rather than by never touching
+          # it, so the agreement is to rounding and not to the bit.
+          for i in range(6):
+              assert abs(cleaned.covariance[i][i] / unbiased[i][i] - 1.0) < 1e-12
+          print(
+              f"shrinkage intensity {result.intensity:.4f}, variances preserved; "
+              f"{cleaned.kept} of 6 directions above the band, smallest detectable "
+              f"factor {detection_threshold(6, 40):.3f}"
+          )
           PY
       # These assertions read License-Expression, License-File and the classifiers
       # out of dist-info. In the test job that dist-info belongs to an editable
