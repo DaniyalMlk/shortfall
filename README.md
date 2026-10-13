@@ -1823,6 +1823,108 @@ Neither dominates, so `compare_estimators` returns a table rather than a
 recommendation — and the lesson is about benchmarks: the two panels anyone would
 reach for first are the two on which the question cannot be asked.
 
+## A book that is not linear in its factors
+
+Everything above treats the portfolio as a vector of weights. A book of options
+is not: to second order its profit is `a + delta' x + 0.5 x' Gamma x`, and the
+quadratic term is where every asymmetry in the distribution comes from. Whiten
+the factors and diagonalise, and the problem becomes a sum of independent pieces
+whose cumulant generating function is closed.
+
+```bash
+shortfall curvature examples/returns.csv --delta 0.5,-0.2,0.1,0.0 \
+  --gamma-diagonal 40,30,25,0 --theta-funded
+```
+
+```
+quantity                        value
+----------------------------  -------
+value at risk                  1.021%
+expected shortfall             1.045%
+worst case                     1.085%
+delta-normal value at risk     2.185%
+skewness                      +2.3487
+excess kurtosis               +8.5398
+share of variance from delta   41.43%
+
+The delta-only number is 2.01 times a loss the book cannot sustain: it charges
+the theta and drops the gamma the theta paid for.
+```
+
+### Every term of the third cumulant carries a gamma
+
+The four cumulants are
+
+```
+k1 = a + 0.5 sum lambda
+k2 = sum (0.5 lambda^2 + beta^2)
+k3 = sum (lambda^3 + 3 beta^2 lambda)
+k4 = sum (3 lambda^4 + 12 beta^2 lambda^2)
+```
+
+so a linear book has no skewness and no excess kurtosis whatever its covariance
+is. There is no "skewness of the deltas"; the asymmetry is the gamma. The
+cumulants are checked against traces in the factors' own coordinates —
+`tr(Gamma Sigma)`, `delta' Sigma delta + tr((Gamma Sigma)^2)/2` and the two
+higher ones — which touches neither the Cholesky factor nor the Jacobi rotation
+the implementation depends on.
+
+### A long-gamma book has a floor, and a delta-only model walks straight through it
+
+Completing the square gives `inf L = a - 0.5 sum beta^2 / lambda` when every
+eigenvalue is positive. On a three-factor book whose gamma is paid for by its
+theta, so the expected profit is zero, the floor is 4.708% and:
+
+| confidence | exact VaR | exact ES | delta-normal |
+| --- | --- | --- | --- |
+| 90% | 3.80% | 4.18% | 5.68% |
+| 95% | 4.16% | 4.39% | 6.09% |
+| 99% | 4.53% | 4.60% | 6.85% |
+| 99.9% | 4.67% | 4.69% | 7.71% |
+
+The exact numbers converge on the floor. The delta-normal number passes through
+it at **65.9%** confidence and never comes back, so at 99% it quotes 1.46 times a
+loss the book cannot sustain. Four hundred thousand simulated paths came within
+2e-05 of the floor without crossing it, so the bound is tight as well as true.
+
+Flip the gamma's sign and the error reverses. The book now receives the theta, a
+delta-normal model credits it and drops the gamma it was paid for taking, and
+reports a **negative** value at risk at 95% — no loss at all — against a true
+7.62%, and -1.65% at 99% against a true 14.04%. The mechanism is the same in both
+cases and only one of the two errors is in the safe direction. On that book the
+curvature also carries 92% of the variance, so this is not a small correction
+about shape.
+
+### The expansion is asymptotic in the factor count
+
+Equal eigenvalues with no linear term is a scaled chi-square, which is an exact
+oracle. Worst absolute error of the saddlepoint distribution function over the
+body: 1.4e-02 at one independent direction, 2.8e-03 at two, 2.6e-04 at five,
+5.7e-05 at ten, 1.2e-05 at thirty. The method is not uniformly accurate and a
+book dominated by one direction of gamma sits at the top of that table. The two
+tails are computed independently — by negating the form, because `1 - F` is zero
+once the true tail is below the rounding of one — and their sum departs from one
+by 1.09e-02 on the strongly skewed three-factor book, which is a second reading
+of the same thing.
+
+### Two places the arithmetic had to be written carefully
+
+`-0.5 log(1 - lambda t)` made the distribution function wrong by a per cent
+within a thousandth of a standard deviation of the mean. The logarithm's argument
+is near one for a small saddlepoint, `1.0 - x` there carries an absolute error of
+an ulp of one while the answer is of size `x`, and the error lands in
+`t K'(t) - K(t)` — itself a cancellation of size `t^2`. With `log1p(-lambda t)`
+the same point holds to 6e-05 at a millionth of a standard deviation.
+
+At the mean both correction terms vanish and their difference does not, so it is
+taken as a limit, and the switch is on the dimensionless `t sqrt(k2)` rather than
+on the level equalling the mean. A level one rounding from the mean has a
+saddlepoint of 1e-16, which is not zero, and the direct form then divides two
+quantities that agree in every bit. The distribution function read exactly `1.0`
+there and the clamp on `[0, 1]` turned that into a plausible number; the accuracy
+sweep reported 0.32, 0.37 and 0.44 at one, two and ten factors and 2.6e-04 at
+five, and it was the non-monotonicity rather than the size that gave it away.
+
 ## Development
 
 ```bash

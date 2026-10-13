@@ -1126,7 +1126,8 @@ the bound is tight as well as true.
 Flip the sign of the gamma and the same arithmetic runs the other way. The book
 now receives the theta, a delta-normal model credits it, drops the gamma it was
 paid for taking, and reports a **negative** value at risk at 95% — no loss at
-all — against a true loss of 7.62%, and 14.04% at 99% against 1.65%. The
+all — against a true loss of 7.62%, and 14.04% at 99% against a quoted -1.65%.
+The
 mechanism is identical in both cases: the model charges or credits the theta and
 ignores what the theta bought. Only one of the two errors is in the safe
 direction.

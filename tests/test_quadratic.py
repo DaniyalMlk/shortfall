@@ -642,3 +642,30 @@ def test_a_risk_estimate_is_a_plain_record() -> None:
     assert record.exceeds_the_floor
     assert record.skewness == pytest.approx(1e-6 / math.pow(0.0004, 1.5), rel=1e-12)
     assert record.excess_kurtosis == pytest.approx(1e-8 / 0.0004**2, rel=1e-12)
+
+
+def test_the_documented_table_of_risk_numbers() -> None:
+    """The roadmap and readme quote these, so they are asserted rather than
+    described. Floor 4.708%, and the exact numbers converging on it while the
+    delta-normal number walks away from it."""
+    form = standard_form(theta_funded(LONG_GAMMA), COVARIANCE)
+    assert -form_support(form)[0] * 100.0 == pytest.approx(4.708, abs=5e-3)
+    table = {
+        0.90: (3.803, 4.182, 5.683),
+        0.95: (4.161, 4.387, 6.089),
+        0.99: (4.530, 4.602, 6.851),
+        0.999: (4.670, 4.685, 7.705),
+    }
+    for confidence, (var, shortfall, linear) in table.items():
+        risk = quadratic_risk(form, confidence)
+        assert risk.value_at_risk * 100.0 == pytest.approx(var, abs=5e-3)
+        assert risk.expected_shortfall * 100.0 == pytest.approx(shortfall, abs=5e-3)
+        assert -delta_normal_quantile(form, 1.0 - confidence) * 100.0 == pytest.approx(
+            linear, abs=5e-3
+        )
+    short = standard_form(theta_funded(SHORT_GAMMA), COVARIANCE)
+    assert quadratic_risk(short, 0.99).value_at_risk * 100.0 == pytest.approx(14.04, abs=1e-2)
+    assert -delta_normal_quantile(short, 0.01) * 100.0 == pytest.approx(-1.649, abs=5e-3)
+    assert cumulants(linear_form(form), 2)[1] / cumulants(form, 2)[1] == pytest.approx(
+        0.0785, abs=5e-4
+    )
