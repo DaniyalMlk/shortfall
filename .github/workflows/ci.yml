@@ -70,6 +70,10 @@ jobs:
           shortfall contributions examples/returns.csv --weights 0.4,0.25,0.15,0.2
           shortfall parity examples/returns.csv --shrink
           shortfall drawdown examples/returns.csv --periods 252
+          shortfall curvature examples/returns.csv --delta 0.5,-0.2,0.1,0.0 \
+            --gamma-diagonal 40,30,25,0 --theta-funded
+          shortfall curvature examples/returns.csv --delta 0.5,-0.2,0.1,0.0 \
+            --gamma-diagonal=-40,-30,-25,0 --theta-funded --confidence 0.95
           shortfall factors examples/returns.csv --factors examples/factors.csv
           shortfall volatility examples/returns.csv --weights 0.4,0.25,0.15,0.2
           shortfall volatility examples/returns.csv --paths 5000 --horizon 10

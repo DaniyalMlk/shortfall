@@ -1836,3 +1836,80 @@ def test_clean_refuses_a_split_that_leaves_nothing_to_measure(tmp_path: Path) ->
     )
     assert code == 2
     assert out == ""
+
+
+# -- the curvature command ----------------------------------------------------
+
+
+def test_curvature_prints_the_worst_case_between_the_two_numbers(tmp_path: Path) -> None:
+    """A long-gamma book, theta-funded: the delta-only number lands above a loss
+    the book cannot sustain, and the report says so rather than leaving the
+    reader to compare two rows."""
+    path = sample_file(tmp_path / "r.csv")
+    status, out = run(
+        "curvature",
+        str(path),
+        "--delta",
+        "0.5,-0.2,0.1",
+        "--gamma-diagonal",
+        "40,30,25",
+        "--theta-funded",
+        "--confidence",
+        "0.99",
+    )
+    assert status == 0
+    assert "worst case" in out
+    assert "times a loss the book cannot sustain" in out
+    assert "share of variance from delta" in out
+
+
+def test_curvature_reports_a_short_gamma_book_as_understated(tmp_path: Path) -> None:
+    path = sample_file(tmp_path / "r.csv")
+    status, out = run(
+        "--json",
+        "curvature",
+        str(path),
+        "--delta",
+        "0.5,-0.2,0.1",
+        # The `=` is needed, not stylistic: argparse reads a leading minus as
+        # the start of another option.
+        "--gamma-diagonal=-40,-30,-25",
+        "--theta-funded",
+        "--confidence",
+        "0.95",
+    )
+    assert status == 0
+    payload = json.loads(out)
+    assert payload["worst_case"] is None
+    assert payload["best_case"] is not None
+    assert payload["skewness"] < 0.0
+    assert payload["delta_normal_value_at_risk"] < payload["value_at_risk"]
+    assert payload["expected_shortfall"] > payload["value_at_risk"]
+    assert payload["cumulants"][0] == pytest.approx(0.0, abs=1e-15)
+
+
+def test_curvature_takes_a_full_gamma_matrix_from_a_file(tmp_path: Path) -> None:
+    """And a diagonal file has to agree with the diagonal flag, which is the only
+    check available on the reader."""
+    path = sample_file(tmp_path / "r.csv")
+    matrix = write(tmp_path / "g.csv", "40,0,0\n0,30,0\n0,0,25\n")
+    common = ["curvature", str(path), "--delta", "0.5,-0.2,0.1", "--theta-funded"]
+    first = run("--json", *common, "--gamma", str(matrix))
+    second = run("--json", *common, "--gamma-diagonal", "40,30,25")
+    assert first[0] == second[0] == 0
+    assert json.loads(first[1])["value_at_risk"] == pytest.approx(
+        json.loads(second[1])["value_at_risk"], rel=1e-12
+    )
+
+
+def test_curvature_refuses_an_exposure_that_does_not_fit_the_file(tmp_path: Path) -> None:
+    path = sample_file(tmp_path / "r.csv")
+    assert run("curvature", str(path), "--delta", "0.5", "--gamma-diagonal", "40,30,25")[
+        0
+    ] == 2
+    assert run("curvature", str(path), "--delta", "0.5,0,0", "--gamma-diagonal", "40,30")[
+        0
+    ] == 2
+    assert run("curvature", str(path), "--delta", "0.5,0,0")[0] == 2
+    matrix = write(tmp_path / "g.csv", "40,0\n0,30\n")
+    assert run("curvature", str(path), "--delta", "0.5,0,0", "--gamma", str(matrix))[0] == 2
