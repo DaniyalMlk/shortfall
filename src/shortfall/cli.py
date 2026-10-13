@@ -62,6 +62,15 @@ from .factors import attribute_risk, fit_factor_model
 from .historical import historical_risk
 from .horizon import Innovations, horizon_risk
 from .parametric import Distribution, normal_risk, portfolio_risk, student_t_risk
+from .quadratic import (
+    Exposure,
+    cumulants,
+    delta_normal_quantile,
+    form_support,
+    linear_form,
+    quadratic_risk,
+    standard_form,
+)
 from .realised import BadBar, Bars, Estimator, realised_volatility, tick_bias_factor
 from .saddlepoint import (
     LossPortfolio,
@@ -430,6 +439,118 @@ def command_parity(arguments: argparse.Namespace, stream: TextIO) -> dict[str, A
         file=stream,
     )
     print(f"Portfolio volatility {percent(result.allocation.total)}.", file=stream)
+    return payload
+
+
+def _gamma_matrix(arguments: argparse.Namespace, size: int) -> list[list[float]]:
+    """Read the second-derivative matrix, from a file or from its diagonal."""
+    if (arguments.gamma is None) == (arguments.gamma_diagonal is None):
+        raise InputError("give exactly one of --gamma and --gamma-diagonal")
+    if arguments.gamma_diagonal is not None:
+        values = [float(piece) for piece in arguments.gamma_diagonal.split(",")]
+        if len(values) != size:
+            raise InputError(
+                f"the gamma diagonal has {len(values)} entries and the returns file "
+                f"has {size} columns"
+            )
+        return [
+            [values[row] if row == column else 0.0 for column in range(size)]
+            for row in range(size)
+        ]
+    rows: list[list[float]] = []
+    with Path(arguments.gamma).open(newline="") as handle:
+        for line in csv.reader(handle):
+            if not line or not line[0].strip():
+                continue
+            rows.append([float(cell) for cell in line])
+    if len(rows) != size or any(len(row) != size for row in rows):
+        raise InputError(
+            f"the gamma file is not {size} by {size}, which is what the returns file "
+            "describes"
+        )
+    return rows
+
+
+def command_curvature(arguments: argparse.Namespace, stream: TextIO) -> dict[str, Any]:
+    """Second-order risk, beside the delta-only number it replaces.
+
+    The comparison is the command. A delta-only model charges or credits the
+    book's theta and drops the gamma the theta paid for, so on a long-gamma book
+    it quotes a loss larger than the book's own worst case and on a short-gamma
+    book it can quote no loss at all. Both numbers are printed with the floor
+    between them, which is the only arrangement in which the error is obvious.
+    """
+    parsed = read_table(arguments.returns)
+    panel = parsed.panel
+    covariance = covariance_of(panel, shrink=arguments.shrink)
+    size = len(panel.names)
+    delta = [float(piece) for piece in arguments.delta.split(",")]
+    if len(delta) != size:
+        raise InputError(
+            f"the delta vector has {len(delta)} entries and the returns file has "
+            f"{size} columns"
+        )
+    gamma = _gamma_matrix(arguments, size)
+    bare = standard_form(Exposure(delta=delta, gamma=gamma), covariance)
+    constant = (
+        -0.5 * sum(bare.curvature) if arguments.theta_funded else arguments.theta
+    )
+    form = standard_form(Exposure(delta=delta, gamma=gamma, constant=constant), covariance)
+    risk = quadratic_risk(form, arguments.confidence)
+    linear = -delta_normal_quantile(form, 1.0 - arguments.confidence)
+    low, high = form_support(form)
+    variance_share = cumulants(linear_form(form), 2)[1] / cumulants(form, 2)[1]
+
+    payload: dict[str, Any] = {
+        "constant": constant,
+        "curvature": list(form.curvature),
+        "cumulants": list(risk.cumulants),
+        "skewness": risk.skewness,
+        "excess_kurtosis": risk.excess_kurtosis,
+        "linear_variance_share": variance_share,
+        "worst_case": None if low == -math.inf else -low,
+        "best_case": None if high == math.inf else high,
+        "confidence": arguments.confidence,
+        "value_at_risk": risk.value_at_risk,
+        "expected_shortfall": risk.expected_shortfall,
+        "delta_normal_value_at_risk": linear,
+        "delta_normal_exceeds_worst_case": linear > risk.floor,
+    }
+    if arguments.json:
+        return payload
+
+    print(f"Second-order risk at {arguments.confidence:.4%} confidence\n", file=stream)
+    rows = [["quantity", "value"]]
+    rows.append(["value at risk", percent(risk.value_at_risk)])
+    rows.append(["expected shortfall", percent(risk.expected_shortfall)])
+    rows.append(
+        ["worst case", "unbounded" if low == -math.inf else percent(-low)]
+    )
+    rows.append(["delta-normal value at risk", percent(linear)])
+    rows.append(["skewness", f"{risk.skewness:+.4f}"])
+    rows.append(["excess kurtosis", f"{risk.excess_kurtosis:+.4f}"])
+    rows.append(["share of variance from delta", f"{variance_share:.2%}"])
+    table(rows, stream)
+    if payload["delta_normal_exceeds_worst_case"]:
+        print(
+            f"\nThe delta-only number is {linear / risk.floor:.2f} times a loss the "
+            "book cannot sustain: it charges the theta and drops the gamma the theta "
+            "paid for.",
+            file=stream,
+        )
+    elif linear < risk.value_at_risk:
+        nothing = (
+            " It is negative, so it reports no loss at all at this confidence."
+            if linear < 0.0
+            else ""
+        )
+        share = linear / risk.value_at_risk if risk.value_at_risk > 0.0 else float("nan")
+        print(
+            f"\nThe delta-only number is {share:.2f} of the second-order one: the book "
+            "is short gamma, and the model has credited it the theta and dropped what "
+            f"the theta was paid for.{nothing}",
+            file=stream,
+        )
     return payload
 
 
@@ -2285,6 +2406,7 @@ COMMANDS = {
     "stress": command_stress,
     "bounds": command_bounds,
     "clean": command_clean,
+    "curvature": command_curvature,
 }
 
 
@@ -2342,6 +2464,52 @@ def build_parser() -> argparse.ArgumentParser:
 
     parity = subparsers.add_parser("parity", help="equal risk contribution weights")
     common(parity, weights=False)
+
+    curvature = subparsers.add_parser(
+        "curvature",
+        help="second-order risk, beside the delta-only number it replaces",
+        description=(
+            "Value at risk and expected shortfall for a book that is quadratic "
+            "in its factors, exactly rather than by expansion: the cumulants of "
+            "the quadratic form are closed and the tail is a saddlepoint. The "
+            "number worth looking at is the worst case, which a long-gamma book "
+            "has and a delta-only model does not -- above a confidence that "
+            "depends on the book, a delta-only number is a loss the book cannot "
+            "sustain. The returns file supplies the factor covariance; --delta "
+            "and one of --gamma or --gamma-diagonal supply the exposure."
+        ),
+    )
+    common(curvature, weights=False)
+    curvature.add_argument(
+        "--delta",
+        required=True,
+        help="comma-separated first derivatives, one per column of the returns file",
+    )
+    curvature.add_argument(
+        "--gamma", type=Path, default=None, help="CSV of the full second-derivative matrix"
+    )
+    curvature.add_argument(
+        "--gamma-diagonal",
+        dest="gamma_diagonal",
+        default=None,
+        help="comma-separated diagonal, for a book with no cross-gamma. A short "
+        "book's diagonal is negative and needs the equals form, "
+        "--gamma-diagonal=-40,-30, because a leading minus reads as another option.",
+    )
+    curvature.add_argument(
+        "--theta",
+        type=float,
+        default=0.0,
+        help="profit at an unchanged factor level, as a decimal",
+    )
+    curvature.add_argument(
+        "--theta-funded",
+        dest="theta_funded",
+        action="store_true",
+        help="set the theta so the expected profit is zero, which is the "
+        "configuration the comparison is interesting in",
+    )
+    curvature.add_argument("--confidence", type=float, default=0.99)
 
     path = subparsers.add_parser("drawdown", help="drawdown and path statistics")
     common(path)

@@ -37,10 +37,11 @@ from shortfall.quadratic import (
     StandardForm,
     cgf,
     cgf_curvature,
+    cgf_domain,
     cgf_slope,
     cumulants,
     delta_normal_quantile,
-    domain,
+    form_support,
     linear_form,
     negated,
     quadratic_cdf,
@@ -50,7 +51,6 @@ from shortfall.quadratic import (
     quadratic_tail,
     saddlepoint_argument,
     standard_form,
-    support,
 )
 
 COVARIANCE: Matrix = [
@@ -175,7 +175,7 @@ def test_a_mixed_sign_gamma_also_matches_the_traces() -> None:
     exposure = Exposure(delta=DELTA, gamma=mixed)
     form = standard_form(exposure, COVARIANCE)
     assert min(form.curvature) < 0.0 < max(form.curvature)
-    assert support(form) == (-math.inf, math.inf)
+    assert form_support(form) == (-math.inf, math.inf)
     for one, other in zip(
         cumulants(form, 4), reference_cumulants(exposure, COVARIANCE), strict=True
     ):
@@ -244,7 +244,7 @@ def test_the_generating_functions_derivatives_are_its_derivatives() -> None:
     """Against central differences, which is the only check that the three
     closed forms are derivatives of each other rather than three formulas."""
     form = standard_form(theta_funded(LONG_GAMMA), COVARIANCE)
-    lower, upper = domain(form)
+    lower, upper = cgf_domain(form)
     assert lower == -math.inf
     assert upper == pytest.approx(1.0 / max(form.curvature), rel=1e-15)
     # Each derivative against a central difference of the one above it. A second
@@ -267,8 +267,8 @@ def test_the_generating_functions_derivatives_are_its_derivatives() -> None:
 
 def test_the_domain_is_set_by_the_two_extreme_eigenvalues() -> None:
     mixed = StandardForm(0.0, (0.1, 0.1, 0.1), (-4.0, 0.0, 2.0))
-    assert domain(mixed) == (-0.25, 0.5)
-    assert domain(StandardForm(0.0, (1.0,), (0.0,))) == (-math.inf, math.inf)
+    assert cgf_domain(mixed) == (-0.25, 0.5)
+    assert cgf_domain(StandardForm(0.0, (1.0,), (0.0,))) == (-math.inf, math.inf)
     for argument in (-0.25, 0.5, 1.0):
         with pytest.raises(NotQuadratic, match="finite on"):
             cgf(mixed, argument)
@@ -287,7 +287,7 @@ def test_the_saddlepoint_solves_its_own_equation() -> None:
 
 def test_a_level_outside_the_support_has_no_saddlepoint() -> None:
     form = standard_form(theta_funded(LONG_GAMMA), COVARIANCE)
-    low, _ = support(form)
+    low, _ = form_support(form)
     with pytest.raises(DidNotSolve, match="outside the support"):
         saddlepoint_argument(form, low - 0.01)
 
@@ -339,7 +339,7 @@ def test_a_single_factor_matches_the_elementary_distribution_function() -> None:
         form = StandardForm(0.0, (0.4,), (curve,))
         worst = 0.0
         for level in (-6.0, -2.0, -0.5, -0.2, 0.0, 0.2, 0.5, 2.0, 6.0):
-            low, high = support(form)
+            low, high = form_support(form)
             if not low < level < high:
                 continue
             worst = max(worst, abs(quadratic_cdf(form, level) - exact(0.0, 0.4, curve, level)))
@@ -392,7 +392,7 @@ def test_the_delta_normal_quantile_is_the_linear_forms_own() -> None:
 def test_the_floor_is_the_completed_square_and_nothing_reaches_it() -> None:
     exposure = theta_funded(LONG_GAMMA)
     form = standard_form(exposure, COVARIANCE)
-    low, high = support(form)
+    low, high = form_support(form)
     assert high == math.inf
     expected = form.constant - 0.5 * sum(
         slope * slope / curve
@@ -409,7 +409,7 @@ def test_the_floor_is_the_completed_square_and_nothing_reaches_it() -> None:
 
 def test_a_short_gamma_book_has_a_ceiling_and_no_floor() -> None:
     form = standard_form(theta_funded(SHORT_GAMMA), COVARIANCE)
-    low, high = support(form)
+    low, high = form_support(form)
     assert low == -math.inf
     assert high == pytest.approx(0.047077, abs=1e-6)
     assert quadratic_risk(form, 0.99).floor == math.inf
@@ -417,7 +417,7 @@ def test_a_short_gamma_book_has_a_ceiling_and_no_floor() -> None:
 
 def test_the_value_at_risk_of_a_long_gamma_book_converges_on_its_floor() -> None:
     form = standard_form(theta_funded(LONG_GAMMA), COVARIANCE)
-    floor = -support(form)[0]
+    floor = -form_support(form)[0]
     previous = 0.0
     for confidence in (0.9, 0.95, 0.99, 0.999, 0.99999):
         risk = quadratic_risk(form, confidence)
@@ -437,7 +437,7 @@ def test_the_delta_normal_number_passes_through_the_floor_at_a_measurable_point(
     the gamma is what the theta bought.
     """
     form = standard_form(theta_funded(LONG_GAMMA), COVARIANCE)
-    floor = -support(form)[0]
+    floor = -form_support(form)[0]
     for confidence, multiple in ((0.9, 1.21), (0.95, 1.29), (0.99, 1.46), (0.999, 1.64)):
         quoted = -delta_normal_quantile(form, 1.0 - confidence)
         assert quoted / floor == pytest.approx(multiple, abs=5e-3)
@@ -469,7 +469,7 @@ def test_the_delta_normal_number_reports_a_short_gamma_book_as_riskless() -> Non
 
 def test_a_form_with_no_coefficients_at_all_is_a_point_mass() -> None:
     form = StandardForm(0.03, (0.0, 0.0), (0.0, 0.0))
-    assert support(form) == (0.03, 0.03)
+    assert form_support(form) == (0.03, 0.03)
     assert quadratic_cdf(form, 0.02) == 0.0
     assert quadratic_cdf(form, 0.04) == 1.0
     assert quadratic_quantile(form, 0.5) == 0.03
@@ -477,8 +477,8 @@ def test_a_form_with_no_coefficients_at_all_is_a_point_mass() -> None:
 
 def test_a_flat_direction_with_a_delta_in_it_removes_both_bounds() -> None:
     form = StandardForm(0.0, (0.0, 0.1), (2.0, 0.0))
-    assert support(form) == (-math.inf, math.inf)
-    assert support(StandardForm(0.0, (0.0, 0.0), (2.0, 0.0))) == (0.0, math.inf)
+    assert form_support(form) == (-math.inf, math.inf)
+    assert form_support(StandardForm(0.0, (0.0, 0.0), (2.0, 0.0))) == (0.0, math.inf)
 
 
 # -- the risk numbers against a simulation ------------------------------------
@@ -541,7 +541,7 @@ def test_the_upper_tail_is_computed_rather_than_complemented() -> None:
     form = StandardForm(0.0, (1.0, 1.0, 1.0), (0.01, 0.02, 0.03))
     mean, variance = cumulants(form, 2)
     level = mean + 10.0 * math.sqrt(variance)
-    assert level < support(form)[1]
+    assert level < form_support(form)[1]
     assert 1.0 - quadratic_cdf(form, level) == 0.0
     tail = quadratic_tail(form, level)
     assert 0.0 < tail < 1e-16

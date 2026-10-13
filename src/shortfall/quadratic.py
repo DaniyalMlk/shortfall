@@ -36,7 +36,7 @@ skewness and no excess kurtosis whatever its covariance is. There is no
 **A long-gamma book cannot lose more than a fixed amount, and that bound is
 computable.** Completing the square in each coordinate gives
 ``inf L = a - 0.5 sum beta_i^2 / lambda_i`` when every eigenvalue is positive:
-the loss is bounded below, full stop, by an amount :func:`support` returns. With
+the loss is bounded below, full stop, by an amount :func:`form_support` returns. With
 every eigenvalue negative the same expression is the *ceiling* and the loss is
 unbounded, which is the short-gamma case and the one worth being frightened of.
 
@@ -123,10 +123,11 @@ __all__ = [
     "StandardForm",
     "cgf",
     "cgf_curvature",
+    "cgf_domain",
     "cgf_slope",
     "cumulants",
     "delta_normal_quantile",
-    "domain",
+    "form_support",
     "linear_form",
     "negated",
     "quadratic_cdf",
@@ -136,7 +137,6 @@ __all__ = [
     "quadratic_tail",
     "saddlepoint_argument",
     "standard_form",
-    "support",
 ]
 
 #: Where to stop evaluating the expansion's correction directly and take its
@@ -370,7 +370,7 @@ def cumulants(form: StandardForm, order: int = 4) -> tuple[float, ...]:
     return tuple(out)
 
 
-def domain(form: StandardForm) -> tuple[float, float]:
+def cgf_domain(form: StandardForm) -> tuple[float, float]:
     """The open interval on which the generating function is finite.
 
     ``1 - lambda t > 0`` for every eigenvalue, so the positive eigenvalues cap
@@ -388,7 +388,7 @@ def domain(form: StandardForm) -> tuple[float, float]:
     return lower, upper
 
 
-def support(form: StandardForm) -> tuple[float, float]:
+def form_support(form: StandardForm) -> tuple[float, float]:
     """The range of values the form can actually take.
 
     With every eigenvalue positive the loss is bounded below by
@@ -423,9 +423,9 @@ def cgf(form: StandardForm, argument: float) -> float:
     """``K(t)``, the cumulant generating function.
 
     Raises:
-        NotQuadratic: If the argument is outside :func:`domain`.
+        NotQuadratic: If the argument is outside :func:`cgf_domain`.
     """
-    lower, upper = domain(form)
+    lower, upper = cgf_domain(form)
     if not lower < argument < upper:
         raise NotQuadratic(
             f"the generating function is finite on ({lower!r}, {upper!r}) and was "
@@ -449,7 +449,7 @@ def cgf(form: StandardForm, argument: float) -> float:
 
 def cgf_slope(form: StandardForm, argument: float) -> float:
     """``K'(t)``, which is the mean of the exponentially tilted distribution."""
-    lower, upper = domain(form)
+    lower, upper = cgf_domain(form)
     if not lower < argument < upper:
         raise NotQuadratic(
             f"the generating function is finite on ({lower!r}, {upper!r}) and was "
@@ -466,7 +466,7 @@ def cgf_slope(form: StandardForm, argument: float) -> float:
 
 def cgf_curvature(form: StandardForm, argument: float) -> float:
     """``K''(t)``, the tilted variance. Strictly positive unless the form is a point."""
-    lower, upper = domain(form)
+    lower, upper = cgf_domain(form)
     if not lower < argument < upper:
         raise NotQuadratic(
             f"the generating function is finite on ({lower!r}, {upper!r}) and was "
@@ -481,7 +481,7 @@ def cgf_curvature(form: StandardForm, argument: float) -> float:
 
 def _bracket(form: StandardForm, level: float) -> tuple[float, float]:
     """A sign-changing bracket for ``K'(t) = level`` inside the domain."""
-    lower, upper = domain(form)
+    lower, upper = cgf_domain(form)
     # Start from a scale set by the distribution rather than from 1: a book
     # whose cumulants are in units of 1e-4 has a saddlepoint of order 1e4.
     second = cumulants(form, 2)[1]
@@ -531,7 +531,7 @@ def quadratic_cdf(form: StandardForm, level: float) -> float:
     Outside the support the answer is exact rather than approximate: zero below
     a floor and one above a ceiling.
     """
-    low, high = support(form)
+    low, high = form_support(form)
     if level <= low:
         return 0.0
     if level >= high:
@@ -598,7 +598,7 @@ def quadratic_quantile(form: StandardForm, probability: float) -> float:
     if variance == 0.0:
         return mean
     spread = math.sqrt(variance)
-    low, high = support(form)
+    low, high = form_support(form)
     left = low if math.isfinite(low) else mean - 40.0 * spread
     right = high if math.isfinite(high) else mean + 40.0 * spread
     # The support's endpoint is attained with probability zero, so step just
@@ -634,7 +634,7 @@ def quadratic_shortfall(form: StandardForm, probability: float, *, panels: int =
     worse than an error.
     """
     quantile = quadratic_quantile(form, probability)
-    low, _ = support(form)
+    low, _ = form_support(form)
     if math.isfinite(low):
         integral = _simpson(form, low, quantile, panels)
     else:
@@ -734,7 +734,7 @@ def quadratic_risk(form: StandardForm, confidence: float) -> QuadraticRisk:
     alpha = 1.0 - confidence
     quantile = quadratic_quantile(form, alpha)
     tail_mean = quadratic_shortfall(form, alpha)
-    low, _ = support(form)
+    low, _ = form_support(form)
     floor = math.inf if low == -math.inf else -low
     return QuadraticRisk(
         value_at_risk=-quantile,
