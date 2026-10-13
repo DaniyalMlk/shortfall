@@ -1072,3 +1072,112 @@ So neither cleaning nor shrinking dominates, `compare_estimators` returns a
 table rather than a recommendation, and the thing carried out of the phase is
 about benchmarks: the first two panels anyone would reach for are the two on
 which the question cannot be asked.
+
+## Phase 25 — A book that is not linear in its factors
+
+- [x] The exposure whitened and diagonalised, so a quadratic form in correlated
+      factors becomes a sum of independent pieces
+- [x] The first four cumulants in closed form, with the measurement that every
+      term of the third and fourth carries a curvature
+- [x] The support, which is a hard floor for a long-gamma book and a ceiling for
+      a short-gamma one
+- [x] The distribution function by saddlepoint, with its accuracy measured
+      against two exact cases
+- [x] Both tails computed in their own right, by negating the form rather than
+      complementing the other one
+- [x] Expected shortfall as an integral of the distribution function, with the
+      unbounded case's truncation refused if it does not converge
+- [x] The delta-only comparison through the same code, so there is one
+      implementation rather than two
+- [x] A `curvature` subcommand, and both directions of the error in the worked
+      example
+
+### What the phase is for
+
+Everything before this treats the portfolio as a vector of weights. A book of
+options is not: to second order its profit is `a + delta' x + 0.5 x' Gamma x`,
+and the quadratic term is not a correction to be bolted onto a linear answer. It
+is where every asymmetry in the distribution comes from. Each term of the third
+and fourth cumulants carries an eigenvalue of the whitened gamma, so a linear
+book has no skewness and no excess kurtosis however its factors are distributed.
+There is no "skewness of the deltas".
+
+### The number a delta-only model cannot have
+
+Completing the square in each independent direction gives
+`inf L = a - 0.5 sum beta^2 / lambda` when every eigenvalue is positive. A
+long-gamma book has a floor — not a confidence interval, a floor. On a
+three-factor book whose gamma is paid for by its theta, so the expected profit is
+zero:
+
+| confidence | exact VaR | exact ES | delta-normal |
+| --- | --- | --- | --- |
+| 90% | 3.80% | 4.18% | 5.68% |
+| 95% | 4.16% | 4.39% | 6.09% |
+| 99% | 4.53% | 4.60% | 6.85% |
+| 99.9% | 4.67% | 4.69% | 7.71% |
+
+against a floor of 4.708%. The exact numbers converge on it; the delta-normal
+number passes through it at a confidence of **65.9%** and never comes back, so at
+99% it is quoting 1.46 times a loss the book cannot sustain. Four hundred
+thousand simulated paths came within 2e-05 of the floor without crossing it, so
+the bound is tight as well as true.
+
+Flip the sign of the gamma and the same arithmetic runs the other way. The book
+now receives the theta, a delta-normal model credits it, drops the gamma it was
+paid for taking, and reports a **negative** value at risk at 95% — no loss at
+all — against a true loss of 7.62%, and 14.04% at 99% against 1.65%. The
+mechanism is identical in both cases: the model charges or credits the theta and
+ignores what the theta bought. Only one of the two errors is in the safe
+direction.
+
+On that book the curvature also carries 92.2% of the variance. A delta-only model
+is not making a small error about the shape; it is missing most of the risk.
+
+### The expansion is asymptotic in the factor count, and that is measurable
+
+Equal eigenvalues with no linear term is a scaled chi-square, which gives an
+exact oracle. The worst absolute error of the saddlepoint distribution function
+over the body:
+
+| independent directions | worst error |
+| --- | --- |
+| 1 | 1.4e-02 |
+| 2 | 2.8e-03 |
+| 5 | 2.6e-04 |
+| 10 | 5.7e-05 |
+| 30 | 1.2e-05 |
+
+So the method is not uniformly accurate, and a book dominated by one direction of
+gamma sits at the top of that table rather than the bottom. The same thing shows
+up a second way: the lower and upper tail expansions are independent, so their
+sum is one only to the expansion's accuracy, and on the strongly skewed
+three-factor book above the worst gap is 1.09e-02 — which places it near the
+one-factor end, not the three-factor end.
+
+### The logarithm that destroyed the answer near the mean
+
+The generating function has `-0.5 log(1 - lambda t)` in it. Written that way the
+distribution function was wrong by a per cent within a thousandth of a standard
+deviation of the mean. The argument is near one for a small saddlepoint, `1.0 - x`
+carries an absolute error of an ulp of one while the answer is of size `x`, and
+the quantity that error lands in is `t K'(t) - K(t)` — itself a cancellation of
+size `t^2`. With `log1p(-lambda t)` the same point holds to 6e-05 at a millionth
+of a standard deviation.
+
+### The branch that read exactly 1.0 at the mean
+
+At the mean both of Lugannani-Rice's correction terms vanish and their difference
+does not, so the difference has to be taken as a limit. The obvious test is
+whether the level equals the mean, and it is the wrong test: a level one rounding
+away has a saddlepoint of 1e-16, which is not zero, and the direct form then
+divides two quantities that agree in every bit they have. The distribution
+function read exactly `1.0` at the mean of a one-dimensional form and the clamp
+on `[0, 1]` turned that into a plausible number rather than a visible one — the
+first version of the accuracy sweep reported errors of 0.32, 0.37 and 0.44 at
+one, two and ten factors and 2.6e-04 at five, which is non-monotone and was the
+only reason it was caught at all.
+
+The test is now on the dimensionless `t sqrt(k2)`, with the threshold at the
+balance of the two errors: the discontinuity across it is 4e-06, two orders
+inside the expansion's own error.
