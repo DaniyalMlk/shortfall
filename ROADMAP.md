@@ -1182,3 +1182,106 @@ only reason it was caught at all.
 The test is now on the dimensionless `t sqrt(k2)`, with the threshold at the
 balance of the two errors: the discontinuity across it is 4e-06, two orders
 inside the expansion's own error.
+
+## Phase 26 — The worst a plausible set of factor moves can do
+
+- [x] A chi-square quantile, so an ellipsoid is named by the probability it
+      holds rather than by a bare number of standard deviations
+- [x] The whitening transform exposed from behind `standard_form`, so a point
+      in the independent coordinates can be mapped back to a factor move
+- [x] The exact maximum loss over the ellipsoid through the secular equation,
+      including the hard case
+- [x] The closed form for a linear book, and the statement that it is a
+      volatility multiple
+- [x] The worst-case factor move itself, in each factor's own standard
+      deviations
+- [x] The one-factor-at-a-time stress test, for comparison, scaled onto the
+      same ellipsoid
+- [x] A `worst-case` subcommand and a worked example wired into CI
+
+### A different question from a quantile
+
+Everything else here is a quantile or a tail average of a distribution. A risk
+committee also asks what the worst a plausible set of factor moves can do, and
+what those moves are. The plausible set is the Mahalanobis ellipsoid
+`x' Sigma^-1 x <= radius^2` — the set the covariance itself defines, so that no
+direction is privileged by the shape of the set rather than by the book. In the
+coordinates `whitening` produces that set is the Euclidean ball, and the problem
+is the trust-region subproblem with a diagonal Hessian: a scalar equation, not
+an optimiser.
+
+### The shift goes on the largest curvature, and the first attempt did not
+
+The stationarity condition is `(m - b_i) u_i = g_i` with
+`m >= max(0, max(b))`, where `b` is the loss curvature. The first
+implementation shifted by the *smallest* instead. It produced plausible
+numbers, satisfied its own validation, and lost to a three-thousand-point
+random search on the sphere by a factor of four on the first instance tried.
+Nothing short of an independent reference would have caught it: the output of
+the wrong version is a loss, is positive, grows with the radius, and sits on
+the boundary.
+
+### The hard case is a book shape, not a corner
+
+If the direction of fastest loss growth carries no linear exposure then `g_i`
+is zero there, the term drops out of the secular sum, and the equation has no
+root: the left side at the floor is already below `radius^2`. The answer is to
+pin the multiplier at the extreme curvature, take the solution in the other
+coordinates, and spend the remaining norm along the degenerate direction.
+
+That is exactly a delta-hedged short-gamma position, which makes it the
+ordinary case for an option book rather than an edge case. A two-factor book
+with gamma `diag(-120, -20)` and no delta loses 22.10 at the 99% radius, with
+the whole move in the first factor. And there the one-at-a-time test is
+*exact*, because the factors are uncorrelated and the worst direction is an
+axis — the one shape where the naive test is right, which is worth knowing.
+
+### For a linear book the whole exercise is a volatility multiple
+
+`radius * sqrt(delta' Sigma delta)`, attained in the direction `-Sigma delta`.
+Which is parametric value at risk with a different constant in front. So for a
+book with no curvature a worst-case stress test and a VaR are the same
+calculation and the only live question is which multiplier to use. Saying so is
+more use than letting a reader discover it.
+
+### One factor at a time understates, by a factor that grows with the book
+
+Both searches over the *same* ellipsoid, so the only difference is that one of
+them searches all of it. The median ratio of the joint worst case to the worst
+single-factor loss, over four hundred random books at each size:
+
+| factors | median | q1 | q3 | minimum | same deltas, no gamma |
+|---|---|---|---|---|---|
+| 2 | 1.36 | 1.10 | 2.25 | 1.00 | 1.15 |
+| 3 | 2.04 | 1.46 | 3.52 | 1.01 | 1.38 |
+| 5 | 3.76 | 2.59 | 6.76 | 1.16 | 1.92 |
+| 8 | 6.78 | 4.56 | 9.72 | 1.31 | 2.66 |
+
+Never below one, which it cannot be: the joint search contains every
+single-factor move it is compared against. The last column is the same deltas
+with the curvature removed, so roughly half the gap is the correlation and half
+is the gamma.
+
+### And the sum of the single-factor losses is not a bound either
+
+That sum is the other number such a report carries, and the one treated as
+conservative. The joint worst case exceeds it on 85.4% of random three-factor
+books, 97.6% at five factors and 100% at eight, by a median factor of 1.93,
+3.02 and 4.59. Adding up independent stresses produces a number no single point
+in the factor space attains; it is not an upper bound and not a lower one.
+
+### The usual version of the test is not even inside the set
+
+"Move each factor by three of its own standard deviations" places `e_i` at
+Mahalanobis length `sigma_i sqrt((Sigma^-1)_ii)`, which is at least one and
+equals one only when that factor is uncorrelated with every other. Over random
+correlated covariances that happens never — outside in 100 of 100 draws at
+every factor count tried. So the common stress test is neither a subset of the
+plausible set nor a bound on anything in it, and it still comes out smaller.
+
+### And "three sigma" is not one stress test
+
+The radius has to be named by a probability because the phrase does not
+distinguish the sets it refers to. A ball of radius 3 holds 99.73% of the
+probability over one factor, 97.07% over three, 46.79% over ten and 1.9e-11
+over fifty. The 99% radius runs the other way: 2.58, 3.37, 4.82, 8.73.

@@ -121,6 +121,7 @@ __all__ = [
     "OutsideSupport",
     "QuadraticRisk",
     "StandardForm",
+    "Whitening",
     "cgf",
     "cgf_curvature",
     "cgf_domain",
@@ -137,6 +138,7 @@ __all__ = [
     "quadratic_tail",
     "saddlepoint_argument",
     "standard_form",
+    "whitening",
 ]
 
 #: Where to stop evaluating the expansion's correction directly and take its
@@ -232,8 +234,51 @@ class StandardForm:
         return all(value == 0.0 for value in self.curvature)
 
 
-def standard_form(exposure: Exposure, covariance: Matrix) -> StandardForm:
-    """Whiten the factors and diagonalise the curvature.
+@dataclass(frozen=True, slots=True)
+class Whitening:
+    """The change of coordinates that produced a :class:`StandardForm`.
+
+    ``x = C Q' u`` maps a point in the independent coordinates back to a move
+    in the factors. Both halves are kept because neither alone inverts the
+    transform: ``C`` whitens and ``Q`` diagonalises, and a caller who wants
+    the worst-case *scenario* rather than the worst-case *number* needs the
+    composition.
+
+    Attributes:
+        form: The quadratic form in independent standard normals.
+        factor: The lower-triangular Cholesky factor ``C`` of the covariance.
+        rotation: The orthogonal ``Q``, with the eigenvectors as rows, in the
+            order :func:`~shortfall.linalg.eigh` returns them.
+    """
+
+    form: StandardForm
+    factor: Matrix
+    rotation: Matrix
+
+    def to_factors(self, point: Vector) -> Vector:
+        """The factor move ``x = C Q' u`` corresponding to a point ``u``."""
+        size = len(self.form.linear)
+        if len(point) != size:
+            raise NotQuadratic(
+                f"the point has {len(point)} coordinates and the form has {size}"
+            )
+        rotated = [
+            math.fsum(self.rotation[index][i] * point[index] for index in range(size))
+            for i in range(size)
+        ]
+        return [
+            math.fsum(self.factor[row][column] * rotated[column] for column in range(row + 1))
+            for row in range(size)
+        ]
+
+
+def whitening(exposure: Exposure, covariance: Matrix) -> Whitening:
+    """Whiten the factors and diagonalise the curvature, keeping the transform.
+
+    :func:`standard_form` is this without the transform, and is what almost
+    everything wants. The transform is needed only to turn a point in the
+    independent coordinates back into a factor move a reader recognises, which
+    is what :mod:`shortfall.stress` does.
 
     With ``Sigma = C C'`` the move ``x = C u`` has ``u`` standard normal, so the
     linear term becomes ``C' delta`` and the quadratic one ``C' Gamma C``.
@@ -252,7 +297,8 @@ def standard_form(exposure: Exposure, covariance: Matrix) -> StandardForm:
             undefined rather than zero.
 
     Returns:
-        The form in independent coordinates.
+        The form in independent coordinates, and the two matrices that got it
+        there.
 
     Raises:
         NotQuadratic: If the covariance and the exposure describe different
@@ -294,7 +340,21 @@ def standard_form(exposure: Exposure, covariance: Matrix) -> StandardForm:
     linear = tuple(
         sum(vectors[index][i] * rotated_delta[i] for i in range(size)) for index in range(size)
     )
-    return StandardForm(exposure.constant, linear, tuple(values))
+    return Whitening(
+        form=StandardForm(exposure.constant, linear, tuple(values)),
+        factor=factor,
+        rotation=vectors,
+    )
+
+
+def standard_form(exposure: Exposure, covariance: Matrix) -> StandardForm:
+    """Whiten the factors and diagonalise the curvature.
+
+    See :func:`whitening`, which this is the common case of: everything that
+    wants a risk *number* wants only the form, and keeping the two matrices
+    alive would be two more things for a caller to ignore.
+    """
+    return whitening(exposure, covariance).form
 
 
 def negated(form: StandardForm) -> StandardForm:

@@ -669,3 +669,61 @@ def test_the_documented_table_of_risk_numbers() -> None:
     assert cumulants(linear_form(form), 2)[1] / cumulants(form, 2)[1] == pytest.approx(
         0.0785, abs=5e-4
     )
+
+
+def test_the_whitening_transform_inverts_itself_through_the_profit() -> None:
+    """A point in the independent coordinates and the factor move it names
+    must value the book identically.
+
+    The transform is only worth keeping if it is the transform. Evaluating the
+    exposure directly in the factors and the standard form in the independent
+    coordinates are two different expressions of the same number, and they
+    agree over five hundred random points -- which is the only check that
+    catches a transposed rotation, since a transposed orthogonal matrix is
+    still orthogonal and every risk figure built on it is still plausible.
+
+    The disagreement is measured in absolute terms. A relative one divides by
+    a profit that crosses zero inside the sample, and a ratio taken there says
+    nothing about the transform.
+    """
+    import random
+
+    from shortfall.quadratic import whitening
+
+    covariance = [[0.04, 0.012, 0.0], [0.012, 0.09, -0.01], [0.0, -0.01, 0.0225]]
+    exposure = Exposure(
+        delta=[1.0, -2.0, 0.5],
+        gamma=[[0.5, 0.1, 0.0], [0.1, -0.3, 0.05], [0.0, 0.05, 0.2]],
+        constant=0.25,
+    )
+    transform = whitening(exposure, covariance)
+    assert transform.form == standard_form(exposure, covariance)
+    generator = random.Random(1)
+    worst = 0.0
+    for _ in range(500):
+        point = [generator.gauss(0.0, 1.0) for _ in range(3)]
+        move = transform.to_factors(point)
+        direct = (
+            exposure.constant
+            + math.fsum(exposure.delta[i] * move[i] for i in range(3))
+            + 0.5
+            * math.fsum(
+                move[i] * exposure.gamma[i][j] * move[j] for i in range(3) for j in range(3)
+            )
+        )
+        through = transform.form.constant + math.fsum(
+            transform.form.linear[i] * point[i]
+            + 0.5 * transform.form.curvature[i] * point[i] ** 2
+            for i in range(3)
+        )
+        worst = max(worst, abs(direct - through))
+    assert worst < 1e-12, worst
+
+
+def test_the_whitening_checks_the_width_of_the_point_it_is_given() -> None:
+    from shortfall.quadratic import whitening
+
+    transform = whitening(Exposure(delta=[1.0], gamma=[[0.0]]), [[0.04]])
+    assert transform.to_factors([1.0]) == pytest.approx([0.2])
+    with pytest.raises(NotQuadratic, match="2 coordinates and the form has 1"):
+        transform.to_factors([1.0, 1.0])

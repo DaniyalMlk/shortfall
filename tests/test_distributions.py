@@ -15,6 +15,8 @@ import pytest
 
 from shortfall.distributions import (
     OutOfDomain,
+    chi_square_ppf,
+    chi_square_sf,
     normal_cdf,
     normal_pdf,
     normal_ppf,
@@ -286,3 +288,67 @@ def test_the_standardised_density_refuses_degrees_without_a_variance(
 ) -> None:
     with pytest.raises(OutOfDomain, match="greater than 2"):
         standardised_t_log_pdf(0.0, degrees)
+
+
+def _chi_square_sf_even(x: float, degrees: int) -> float:
+    """``P(X > x)`` for an even number of degrees of freedom, exactly.
+
+    A finite elementary sum with nothing of the library's in it: no incomplete
+    gamma, no continued fraction, no series acceleration. The only independent
+    reference available to a package with no dependencies, and it is an exact
+    one rather than a table of rounded figures.
+    """
+    half = 0.5 * x
+    terms = degrees // 2
+    return math.exp(-half) * math.fsum(half**i / math.factorial(i) for i in range(terms))
+
+
+def test_the_chi_square_tail_matches_the_even_degree_closed_form() -> None:
+    worst = 0.0
+    for degrees in (2, 4, 10, 50, 100):
+        for multiple in (0.05, 0.1, 0.5, 1.0, 2.0, 3.0):
+            x = max(0.5, multiple * degrees)
+            mine = chi_square_sf(x, degrees)
+            exact = _chi_square_sf_even(x, degrees)
+            worst = max(worst, abs(mine - exact) / exact)
+    assert worst < 1e-13, worst
+
+
+def test_the_chi_square_quantile_inverts_its_own_tail() -> None:
+    for degrees in (1, 2, 3, 7, 50, 200):
+        for probability in (0.001, 0.05, 0.5, 0.95, 0.99, 0.999, 0.9999):
+            quantile = chi_square_ppf(probability, degrees)
+            assert chi_square_sf(quantile, degrees) == pytest.approx(
+                1.0 - probability, rel=1e-12
+            )
+
+
+def test_the_chi_square_quantile_matches_the_even_degree_closed_form() -> None:
+    def invert(probability: float, degrees: int) -> float:
+        low, high = 0.0, 10.0 * degrees
+        for _ in range(200):
+            middle = 0.5 * (low + high)
+            if _chi_square_sf_even(middle, degrees) > 1.0 - probability:
+                low = middle
+            else:
+                high = middle
+        return 0.5 * (low + high)
+
+    for degrees in (2, 10, 50, 100):
+        for probability in (0.5, 0.95, 0.999):
+            assert chi_square_ppf(probability, degrees) == pytest.approx(
+                invert(probability, degrees), rel=1e-12
+            )
+
+
+def test_the_chi_square_quantile_brackets_itself_for_a_large_factor_set() -> None:
+    # The bracket is grown from the degrees of freedom rather than fixed, so a
+    # five-hundred-factor set is not a special case.
+    assert chi_square_ppf(0.99, 500) > 500.0
+    assert chi_square_sf(chi_square_ppf(0.99, 500), 500) == pytest.approx(0.01, rel=1e-10)
+
+
+def test_the_chi_square_quantile_refuses_what_is_not_a_probability() -> None:
+    for probability in (0.0, 1.0, -0.1, 1.5):
+        with pytest.raises(OutOfDomain):
+            chi_square_ppf(probability, 3)

@@ -1925,17 +1925,147 @@ there and the clamp on `[0, 1]` turned that into a plausible number; the accurac
 sweep reported 0.32, 0.37 and 0.44 at one, two and ten factors and 2.6e-04 at
 five, and it was the non-monotonicity rather than the size that gave it away.
 
+## The worst a plausible set of factor moves can do
+
+Every other number here is a quantile or a tail average. A committee also asks
+what the worst a plausible set of factor moves can do, and what those moves
+are. The plausible set is the Mahalanobis ellipsoid
+`x' Sigma^-1 x <= radius^2` — the set the covariance itself defines, so no
+direction is privileged by the shape of the set rather than by the book.
+
+In the whitened, diagonalised coordinates that set is the Euclidean ball, so
+the problem is the trust-region subproblem with a diagonal Hessian: a scalar
+equation rather than an optimiser.
+
+```python
+from shortfall import Exposure, one_at_a_time, radius_for, worst_case_scenario
+
+covariance = [
+    [0.000400, 0.000120, 0.000000, 0.000060],
+    [0.000120, 0.000900, -0.000100, 0.000150],
+    [0.000000, -0.000100, 0.000225, -0.000020],
+    [0.000060, 0.000150, -0.000020, 0.000144],
+]
+book = Exposure(
+    delta=[0.5, -0.2, 0.1, 0.3],
+    gamma=[
+        [-40.0, 0.0, 0.0, 0.0],
+        [0.0, -30.0, 0.0, 0.0],
+        [0.0, 0.0, -25.0, 0.0],
+        [0.0, 0.0, 0.0, -10.0],
+    ],
+)
+
+radius = radius_for(0.99, 4)                      # 3.6437, not 3
+worst = worst_case_scenario(book, covariance, radius)
+worst.loss                                        # 0.1981
+worst.standardised                                # +0.80, +3.63, -1.04, +1.49 sigma
+one_at_a_time(book, covariance, radius).worst     # 0.1599
+```
+
+### "Three sigma" is not one stress test
+
+Which is why the radius is named by the probability it holds. A ball of radius
+3 covers 99.73% of the probability over one factor and 1.9e-11 over fifty; the
+99% radius runs the other way.
+
+| factors | 99% radius | probability inside radius 3 |
+|---|---|---|
+| 1 | 2.576 | 99.730% |
+| 3 | 3.368 | 97.071% |
+| 10 | 4.818 | 46.790% |
+| 50 | 8.727 | 0.0000000019% |
+
+### For a linear book the whole exercise is a volatility multiple
+
+`linear_maximum_loss` is `radius * sqrt(delta' Sigma delta)`, attained in the
+direction `-Sigma delta` — which is parametric value at risk with a different
+constant in front. So for a book with no curvature a worst-case stress test and
+a VaR are the same calculation, and the only live question is which multiplier
+to use. The framing starts earning its keep exactly where the curvature does.
+
+### One factor at a time understates, by a factor that grows with the book
+
+Both searches cover the *same* ellipsoid, so the only difference is that one of
+them covers all of it. Median ratio of the joint worst case to the worst
+single-factor loss over four hundred random books at each size:
+
+| factors | median | q1 | q3 | minimum | same deltas, no gamma |
+|---|---|---|---|---|---|
+| 2 | 1.36 | 1.10 | 2.25 | 1.00 | 1.15 |
+| 3 | 2.04 | 1.46 | 3.52 | 1.01 | 1.38 |
+| 5 | 3.76 | 2.59 | 6.76 | 1.16 | 1.92 |
+| 8 | 6.78 | 4.56 | 9.72 | 1.31 | 2.66 |
+
+Never below one, which it cannot be: the joint search contains every
+single-factor move it is compared against. The last column is the same deltas
+with the curvature removed, so about half the gap is correlation and half is
+gamma.
+
+### The sum of the single-factor losses is not a bound either
+
+That is the other number such a report carries, and the one treated as
+conservative. The joint worst case exceeds it on 85.4% of random three-factor
+books, 97.6% at five factors and 100% at eight, by a median factor of 1.93,
+3.02 and 4.59. It is not an upper bound and not a lower one — it is a number no
+single point in the factor space produces.
+
+### And the usual version of the test is not inside the set
+
+"Move each factor by three of its own standard deviations" places `e_i` at
+Mahalanobis length `sigma_i sqrt((Sigma^-1)_ii)`, which is at least one and
+equals one only for a factor uncorrelated with every other. Over random
+correlated covariances it was outside the ellipsoid in 100 of 100 draws at
+every factor count tried. `one_at_a_time` therefore scales each move onto the
+ellipsoid by default, and reports `inside` when asked not to.
+
+### The hard case is a delta-hedged option book
+
+If the direction of fastest loss growth carries no linear exposure, the secular
+equation has no root and the multiplier is pinned at the extreme curvature with
+the remaining norm spent along that direction. That is a short-gamma book with
+its delta taken off, so it is the ordinary case rather than a corner. A
+two-factor book with gamma `diag(-120, -20)` and no delta loses 22.10 at the
+99% radius with the whole move in the first factor — and there the naive test
+is *exact*, because the factors are uncorrelated and the worst direction is an
+axis. That is the one shape where it is right.
+
+```bash
+shortfall worst-case examples/returns.csv --delta=1,-2,0.5,0.3 \
+    --gamma-diagonal=-40,-30,10,5
+```
+
+```
+Worst case over the 99.00% ellipsoid of 4 factors, radius 3.6437
+
+quantity                        value
+----------------------------  -------
+joint worst case               8.806%
+one factor at a time, worst    5.963%
+one factor at a time, summed  12.166%
+the same book with no gamma    4.756%
+
+The move that does it, in each factor's standard deviations:
+
+factor          move  standard deviations
+---------  ---------  -------------------
+equity     -0.053845               -3.533
+credit     -0.016145               -1.988
+gold       +0.002382               +0.241
+utilities  -0.024368               -2.349
+```
+
 ## Development
 
 ```bash
 pip install -e ".[dev]"
-pytest          # 1650 tests
+pytest          # 1928 tests
 mypy --strict
 ruff check .
 ```
 
 Continuous integration runs the suite on Python 3.10 through 3.13, type-checks,
-lints, runs the worked example and the command line over the bundled data, and
+lints, runs the worked examples and the command line over the bundled data, and
 installs the wheel *and* the sdist into separate clean environments to confirm each
 can produce an estimate that satisfies an identity — a distribution that imports
 but cannot compute is not a working library, and the two artefacts are built by
