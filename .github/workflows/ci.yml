@@ -64,6 +64,12 @@ jobs:
         # a fitted normal moves, so a change to the optimiser or the threshold
         # rule cannot quietly rewrite a figure the README quotes.
         run: python examples/tail_comparison.py
+      - name: The worst case reproduces its published comparison
+        # Exits non-zero if the measured gap between a joint search and a
+        # one-factor-at-a-time stress test moves, so a change to the
+        # trust-region solver cannot quietly rewrite a figure the README
+        # quotes.
+        run: python examples/worst_case_scenario.py
       - name: The command line runs over the bundled data
         run: |
           shortfall risk examples/returns.csv --weights 0.4,0.25,0.15,0.2 --shrink
@@ -74,6 +80,10 @@ jobs:
             --gamma-diagonal 40,30,25,0 --theta-funded
           shortfall curvature examples/returns.csv --delta 0.5,-0.2,0.1,0.0 \
             --gamma-diagonal=-40,-30,-25,0 --theta-funded --confidence 0.95
+          shortfall worst-case examples/returns.csv --delta 0.5,-0.2,0.1,0.0 \
+            --gamma-diagonal=-40,-30,-25,0
+          shortfall worst-case examples/returns.csv --delta 0.5,-0.2,0.1,0.0 \
+            --radius 3.0
           shortfall factors examples/returns.csv --factors examples/factors.csv
           shortfall volatility examples/returns.csv --weights 0.4,0.25,0.15,0.2
           shortfall volatility examples/returns.csv --paths 5000 --horizon 10
@@ -86,6 +96,8 @@ jobs:
           shortfall --json risk examples/returns.csv > /dev/null
           shortfall --json tail examples/returns.csv > /dev/null
           shortfall --json copula examples/returns.csv --paths 4000 > /dev/null
+          shortfall --json worst-case examples/returns.csv --delta 0.5,-0.2,0.1,0.0 \
+            --gamma-diagonal=-40,-30,-25,0 > /dev/null
 
   package:
     name: Wheel installs and runs
