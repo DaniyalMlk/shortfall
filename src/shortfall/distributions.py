@@ -411,6 +411,37 @@ def chi_square_cdf(x: float, degrees: float) -> float:
     return regularised_incomplete_gamma(0.5 * x, 0.5 * degrees)
 
 
+def chi_square_ppf(probability: float, degrees: float) -> float:
+    """The chi-square quantile, by bisection on the survival function.
+
+    Bisection on :func:`chi_square_sf` rather than on :func:`chi_square_cdf`:
+    the two agree in the middle and only the survival function still resolves
+    the upper tail, which is the end a quantile at 0.999 is asking about.
+    The bracket is grown from the mean rather than guessed, because the
+    distribution's scale is the degrees of freedom and a fixed upper bound
+    would fail for a large factor set.
+    """
+    _check_degrees(degrees, minimum=0.0)
+    if not 0.0 < probability < 1.0:
+        raise OutOfDomain(f"a probability must lie in (0, 1), got {probability!r}")
+    target = 1.0 - probability
+    low = 0.0
+    high = max(degrees, 1.0)
+    for _ in range(200):
+        if chi_square_sf(high, degrees) < target:
+            break
+        high *= 2.0
+    else:  # pragma: no cover - 200 doublings overshoot any float
+        raise OutOfDomain(f"could not bracket the chi-square quantile at {probability!r}")
+    for _ in range(200):
+        middle = 0.5 * (low + high)
+        if chi_square_sf(middle, degrees) > target:
+            low = middle
+        else:
+            high = middle
+    return 0.5 * (low + high)
+
+
 def chi_square_sf(x: float, degrees: float) -> float:
     """The chi-square survival function, ``1 - F(x)``.
 
@@ -487,6 +518,7 @@ __all__ = [
     "binomial_cdf",
     "binomial_sf",
     "chi_square_cdf",
+    "chi_square_ppf",
     "chi_square_sf",
     "normal_cdf",
     "normal_pdf",
