@@ -97,6 +97,12 @@ from .spectral import (
     spectral_risk,
     tail_share,
 )
+from .stress import (
+    linear_maximum_loss,
+    one_at_a_time,
+    radius_for,
+    worst_case_scenario,
+)
 from .volatility import Innovation, fat_tail_test, fit_garch
 
 
@@ -442,8 +448,17 @@ def command_parity(arguments: argparse.Namespace, stream: TextIO) -> dict[str, A
     return payload
 
 
-def _gamma_matrix(arguments: argparse.Namespace, size: int) -> list[list[float]]:
-    """Read the second-derivative matrix, from a file or from its diagonal."""
+def _gamma_matrix(
+    arguments: argparse.Namespace, size: int, *, optional: bool = False
+) -> list[list[float]]:
+    """Read the second-derivative matrix, from a file or from its diagonal.
+
+    With ``optional`` set, giving neither means a book with no curvature. That
+    is a real book rather than an omission for the worst-case command, where
+    the linear case is the one the quadratic answer is being compared against.
+    """
+    if arguments.gamma is None and arguments.gamma_diagonal is None and optional:
+        return [[0.0] * size for _ in range(size)]
     if (arguments.gamma is None) == (arguments.gamma_diagonal is None):
         raise InputError("give exactly one of --gamma and --gamma-diagonal")
     if arguments.gamma_diagonal is not None:
@@ -2388,7 +2403,121 @@ def command_clean(arguments: argparse.Namespace, stream: TextIO) -> dict[str, An
     return payload
 
 
+def command_worst_case(arguments: argparse.Namespace, stream: TextIO) -> dict[str, Any]:
+    """The worst a plausible set of factor moves can do, and what those moves are.
+
+    Two numbers and a scenario. The joint worst case over the ellipsoid, the
+    worst a one-factor-at-a-time stress test finds over the same ellipsoid,
+    and the factor move that produces the first -- which is the part a
+    committee can act on, because it names what to watch rather than how bad
+    it could get.
+    """
+    parsed = read_table(arguments.returns)
+    panel = parsed.panel
+    covariance = covariance_of(panel, shrink=arguments.shrink)
+    size = len(panel.names)
+    delta = [float(piece) for piece in arguments.delta.split(",")]
+    if len(delta) != size:
+        raise InputError(
+            f"the delta vector has {len(delta)} entries and the returns file has "
+            f"{size} columns"
+        )
+    gamma = _gamma_matrix(arguments, size, optional=True)
+    exposure = Exposure(delta=delta, gamma=gamma)
+    radius = (
+        arguments.radius
+        if arguments.radius is not None
+        else radius_for(arguments.confidence, size)
+    )
+    scenario = worst_case_scenario(exposure, covariance, radius)
+    naive = one_at_a_time(exposure, covariance, radius)
+    unscaled = one_at_a_time(exposure, covariance, radius, on_the_ellipsoid=False)
+    linear = linear_maximum_loss(delta, covariance, radius)
+
+    payload: dict[str, Any] = {
+        "radius": radius,
+        "confidence": arguments.confidence if arguments.radius is None else None,
+        "factors": size,
+        "worst_case": scenario.loss,
+        "mahalanobis": scenario.mahalanobis,
+        "move": list(scenario.move),
+        "standardised_move": list(scenario.standardised),
+        "hard_case": scenario.detail.hard_case,
+        "interior": scenario.detail.interior,
+        "multiplier": scenario.detail.multiplier,
+        "one_at_a_time_worst": naive.worst,
+        "one_at_a_time_worst_factor": panel.names[naive.worst_factor],
+        "one_at_a_time_total": naive.total,
+        "one_at_a_time_unscaled_inside": unscaled.inside,
+        "delta_only_worst_case": linear,
+        "understatement": (
+            scenario.loss / naive.worst if naive.worst > 0.0 else None
+        ),
+    }
+    if arguments.json:
+        return payload
+
+    named = (
+        f"the {arguments.confidence:.2%} ellipsoid"
+        if arguments.radius is None
+        else "the ellipsoid"
+    )
+    print(
+        f"Worst case over {named} of {size} factors, radius {radius:.4f}\n",
+        file=stream,
+    )
+    rows = [["quantity", "value"]]
+    rows.append(["joint worst case", percent(scenario.loss)])
+    rows.append(["one factor at a time, worst", percent(naive.worst)])
+    rows.append(["one factor at a time, summed", percent(naive.total)])
+    rows.append(["the same book with no gamma", percent(linear)])
+    table(rows, stream)
+    if naive.worst > 0.0:
+        verdict = (
+            "which is more, so the sum is not the conservative number it looks like"
+            if scenario.loss > naive.total
+            else "which is less here, though the sum is still not a loss this book "
+            "can suffer"
+        )
+        print(
+            f"\nSearching the whole ellipsoid finds {scenario.loss / naive.worst:.2f} "
+            f"times the worst single-factor loss, and "
+            f"{scenario.loss / naive.total:.2f} times the sum of all of them -- "
+            f"{verdict}: no single point in the factor space produces that total.",
+            file=stream,
+        )
+    if not unscaled.inside:
+        print(
+            f"\nMoving each factor by {radius:.2f} of its OWN standard deviations "
+            "would leave the ellipsoid, so that version of the test is not even "
+            "searching the same set.",
+            file=stream,
+        )
+    print("\nThe move that does it, in each factor's standard deviations:\n", file=stream)
+    moves = [["factor", "move", "standard deviations"]]
+    for index, name in enumerate(panel.names):
+        moves.append(
+            [name, f"{scenario.move[index]:+.6f}", f"{scenario.standardised[index]:+.3f}"]
+        )
+    table(moves, stream)
+    if scenario.detail.hard_case:
+        print(
+            "\nThe direction of fastest loss growth carries no delta, so the "
+            "worst case is set by the curvature alone and the move is even in "
+            "that direction: its mirror image loses exactly as much.",
+            file=stream,
+        )
+    if scenario.detail.interior:
+        print(
+            "\nThe worst point is strictly inside the ellipsoid, so a wider one "
+            "would not find a larger loss: this book's loss is bounded.",
+            file=stream,
+        )
+    return payload
+
+
 COMMANDS = {
+    "worst-case": command_worst_case,
     "risk": command_risk,
     "contributions": command_contributions,
     "parity": command_parity,
@@ -2920,6 +3049,60 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.5,
         help="the fraction of the file the comparison estimates on",
+    )
+
+    worst = subparsers.add_parser(
+        "worst-case",
+        help="the worst a plausible set of factor moves can do, and what those moves are",
+        description=(
+            "The largest loss over the Mahalanobis ellipsoid x' Sigma^-1 x <= "
+            "radius^2, exactly rather than by search: in whitened coordinates "
+            "that set is a ball and the problem is a trust-region subproblem "
+            "with a diagonal Hessian. Printed beside it is the stress test a "
+            "risk report actually contains -- one factor at a time, scaled "
+            "onto the same ellipsoid so the comparison is fair -- and the "
+            "factor move that produces the joint answer, which is the part a "
+            "committee can act on. For a book with no gamma the whole exercise "
+            "is the radius times the book's volatility, so the fourth row is "
+            "the same book with its curvature removed."
+        ),
+    )
+    common(worst, weights=False)
+    worst.add_argument(
+        "--delta",
+        required=True,
+        help="comma-separated first derivatives, one per column of the returns file",
+    )
+    worst.add_argument(
+        "--gamma",
+        type=Path,
+        default=None,
+        help="CSV of the full second-derivative matrix. Omit both gamma options "
+        "for a book with no curvature, where the answer is the radius times the "
+        "book's volatility",
+    )
+    worst.add_argument(
+        "--gamma-diagonal",
+        dest="gamma_diagonal",
+        default=None,
+        help="comma-separated diagonal, for a book with no cross-gamma. A short "
+        "book's diagonal is negative and needs the equals form, "
+        "--gamma-diagonal=-40,-30, because a leading minus reads as another option.",
+    )
+    worst.add_argument(
+        "--confidence",
+        type=float,
+        default=0.99,
+        help="the probability the ellipsoid holds, which fixes its radius through "
+        "the chi-square quantile. Over fifty factors a 99%% ellipsoid has a radius "
+        "of 8.73, not 3",
+    )
+    worst.add_argument(
+        "--radius",
+        type=float,
+        default=None,
+        help="name the radius directly, in Mahalanobis units, instead of by its "
+        "probability content",
     )
 
     stressed = subparsers.add_parser(

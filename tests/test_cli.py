@@ -1913,3 +1913,89 @@ def test_curvature_refuses_an_exposure_that_does_not_fit_the_file(tmp_path: Path
     assert run("curvature", str(path), "--delta", "0.5,0,0")[0] == 2
     matrix = write(tmp_path / "g.csv", "40,0\n0,30\n")
     assert run("curvature", str(path), "--delta", "0.5,0,0", "--gamma", str(matrix))[0] == 2
+
+
+# -- the worst-case command ---------------------------------------------------
+
+
+def test_worst_case_prints_the_joint_answer_beside_the_naive_one(tmp_path: Path) -> None:
+    """Both searches over the same ellipsoid, and the move that produces the
+    joint answer -- which is the part a committee can act on."""
+    path = sample_file(tmp_path / "r.csv")
+    status, out = run(
+        "worst-case",
+        str(path),
+        "--delta=0.5,-0.2,0.1",
+        "--gamma-diagonal=-40,-30,-25",
+        "--confidence",
+        "0.99",
+    )
+    assert status == 0
+    assert "joint worst case" in out
+    assert "one factor at a time, worst" in out
+    assert "one factor at a time, summed" in out
+    assert "the same book with no gamma" in out
+    assert "standard deviations" in out
+    for name in ("alpha", "beta", "gamma"):
+        assert name in out
+    # Three factors at 99% is a radius of 3.37, not 3.
+    assert "3.3682" in out
+
+
+def test_worst_case_json_carries_the_move_and_nothing_non_finite(tmp_path: Path) -> None:
+    path = sample_file(tmp_path / "r.csv")
+    status, out = run(
+        "--json",
+        "worst-case",
+        str(path),
+        "--delta=0.5,-0.2,0.1",
+        "--gamma-diagonal=-40,-30,-25",
+    )
+    assert status == 0
+    payload = json.loads(out)
+    json.dumps(payload, allow_nan=False)
+    assert payload["factors"] == 3
+    assert payload["radius"] == pytest.approx(3.3682, abs=1e-3)
+    assert payload["mahalanobis"] == pytest.approx(payload["radius"], abs=1e-8)
+    assert len(payload["move"]) == 3
+    assert payload["worst_case"] > payload["one_at_a_time_worst"] > 0.0
+    assert payload["understatement"] == pytest.approx(
+        payload["worst_case"] / payload["one_at_a_time_worst"]
+    )
+    assert payload["one_at_a_time_unscaled_inside"] is False
+
+
+def test_worst_case_takes_a_radius_instead_of_a_confidence(tmp_path: Path) -> None:
+    path = sample_file(tmp_path / "r.csv")
+    status, out = run(
+        "--json", "worst-case", str(path), "--delta=1,0,0", "--radius", "2.0"
+    )
+    assert status == 0
+    payload = json.loads(out)
+    assert payload["radius"] == 2.0
+    assert payload["confidence"] is None
+    # No gamma, so the whole exercise is the radius times the book's volatility
+    # and the general solver has to agree with that closed form.
+    assert payload["worst_case"] == pytest.approx(payload["delta_only_worst_case"], rel=1e-12)
+
+
+def test_worst_case_says_when_the_curvature_sets_the_answer(tmp_path: Path) -> None:
+    # A delta-hedged short-gamma book: the direction of fastest loss growth
+    # carries no delta, which is the hard case.
+    path = sample_file(tmp_path / "r.csv")
+    status, out = run(
+        "worst-case", str(path), "--delta=0,0,0", "--gamma-diagonal=-200,-50,-10"
+    )
+    assert status == 0
+    assert "carries no delta" in out
+    assert "mirror image loses exactly as much" in out
+
+
+def test_worst_case_reports_a_bad_delta_and_a_bad_radius(tmp_path: Path) -> None:
+    path = sample_file(tmp_path / "r.csv")
+    status, _ = run("worst-case", str(path), "--delta=1,2", "--gamma-diagonal=-1,-1")
+    assert status == 2
+    status, _ = run(
+        "worst-case", str(path), "--delta=1,2,3", "--gamma-diagonal=-1,-1,-1", "--radius", "-1"
+    )
+    assert status == 2
