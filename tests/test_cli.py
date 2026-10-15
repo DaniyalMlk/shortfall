@@ -1999,3 +1999,97 @@ def test_worst_case_reports_a_bad_delta_and_a_bad_radius(tmp_path: Path) -> None
         "worst-case", str(path), "--delta=1,2,3", "--gamma-diagonal=-1,-1,-1", "--radius", "-1"
     )
     assert status == 2
+
+
+# -- regime ------------------------------------------------------------------
+
+
+def test_regime_reports_the_averaged_shortfall_beside_the_real_one(
+    tmp_path: Path,
+) -> None:
+    stream = io.StringIO()
+    code = main(
+        ["regime", str(sample_file(tmp_path / "r.csv")), "--confidence", "0.99"],
+        stream=stream,
+    )
+    assert code == 0
+    output = stream.getvalue()
+    assert "calm" in output
+    assert "stressed" in output
+    assert "share of the tail" in output
+    assert "not a blend of the two" in output
+
+
+def test_regime_emits_json_with_the_averaging_error_in_it(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    code = main(
+        ["--json", "regime", str(sample_file(tmp_path / "r.csv"))],
+        stream=stream,
+    )
+    assert code == 0
+    payload = json.loads(stream.getvalue().split("\n\n")[-1])
+    assert payload["observations"] == 300
+    assert payload["components"] == 2
+    assert not payload["degenerate"]
+    # The point of the command: the average of the regimes' own shortfalls is
+    # below the mixture's, and the widest regime owns most of the tail.
+    assert payload["averaged_shortfall"] < payload["expected_shortfall"]
+    assert payload["averaging_error"] < 0.0
+    assert payload["expected_shortfall"] > payload["value_at_risk"]
+    shares = [one["tail_share"] for one in payload["regimes"]]
+    assert sum(shares) == pytest.approx(1.0, abs=1e-12)
+    assert shares[-1] > shares[0]
+    assert "horizon" not in payload
+    assert json.dumps(payload, allow_nan=False)
+
+
+def test_regime_starts_the_chain_at_its_stationary_distribution(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    code = main(
+        [
+            "--json",
+            "regime",
+            str(sample_file(tmp_path / "r.csv")),
+            "--horizon",
+            "10",
+            "--stay-calm",
+            "0.98",
+            "--stay-stressed",
+            "0.90",
+        ],
+        stream=stream,
+    )
+    assert code == 0
+    payload = json.loads(stream.getvalue().split("\n\n")[-1])
+    # Not the fitted weight: the chain's own fixed point, 5/6 here. Starting
+    # anywhere else makes the ratio below a statement about the start.
+    assert payload["stationary_calm"] == pytest.approx(5.0 / 6.0, rel=1e-12)
+    assert payload["horizon"] == 10
+    assert payload["square_root_ratio"] == pytest.approx(
+        payload["horizon_value_at_risk"] / payload["square_root_value_at_risk"],
+        rel=1e-12,
+    )
+    assert json.dumps(payload, allow_nan=False)
+
+
+def test_regime_says_so_when_the_fit_hits_the_floor(tmp_path: Path) -> None:
+    stream = io.StringIO()
+    code = main(
+        [
+            "regime",
+            str(sample_file(tmp_path / "r.csv", periods=30)),
+            "--components",
+            "7",
+        ],
+        stream=stream,
+    )
+    assert code == 0
+    assert "variance floor" in stream.getvalue()
+
+
+def test_regime_refuses_a_confidence_outside_the_open_interval(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, _ = run("regime", str(sample_file(tmp_path / "r.csv")), "--confidence", "1.0")
+    assert code == 2
+    assert "between zero and one" in capsys.readouterr().err
