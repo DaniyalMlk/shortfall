@@ -2055,6 +2055,64 @@ gold       +0.002382               +0.241
 utilities  -0.024368               -2.349
 ```
 
+## A book with two states, and the risk that is not an average
+
+Every distribution the package fits to a whole sample has one mode. A risk
+committee's description of its own book has two — a calm state and a stressed
+one — and `shortfall.mixture` is the smallest model that says that.
+
+It is also the model whose arithmetic is most often done wrong. The natural
+thing to write is the weighted average of each regime's own expected
+shortfall, and that is a different question: what the loss would be if a
+regime were drawn first and *then* a bad day inside it. The tail is not drawn
+that way. On a stressed regime happening 5% of the time at four times the
+volatility:
+
+| confidence | expected shortfall | averaged | error | stressed share of the tail |
+|---|---|---|---|---|
+| 90% | 2.244 | 2.018 | -10.1% | 18.3% |
+| 97.5% | 3.844 | 2.688 | -30.1% | 56.9% |
+| 99% | 5.607 | 3.065 | -45.3% | 97.3% |
+| 99.9% | 9.684 | 3.872 | -60.0% | 100.0% |
+
+The error is one-signed and grows with the confidence level, so it is worst
+where the number gets used, and the last column is the reason: a regime that
+happens 5% of the time carries 97.3% of the losses past the 99th percentile.
+`responsibilities` is that column.
+
+```python
+from shortfall import NormalMixture, mixture_risk
+
+book = NormalMixture.two_regime(stress=0.05, stress_deviation=4.0)
+risk = mixture_risk(book, 0.99)
+risk.expected_shortfall          # 5.607
+risk.averaged                    # 3.065 -- the weighted average of the regimes
+risk.responsibility[1]           # 0.973 -- the stressed regime's share of the tail
+```
+
+Sums go through an exact convolution rather than a simulation, so value at
+risk's failure to be subadditive is a fact about the distributions: two
+independent positions losing 100 with probability 0.9% have a value at risk of
+0.031 each and 99.998 together. Bisecting from both sides, that violation
+lives on stressed weights in `(0.004943, 0.010000)` and nowhere else — the
+upper edge is the tail probability and the lower one is `1 - sqrt(c)`.
+
+Over a horizon the regime sequence only matters through its occupation counts,
+so the law of a sum of `h` periods is an exact mixture with `h + 1` components
+rather than `2 ** h` paths. Against square-root scaling it is 0.924 at ten
+periods and 99% confidence and 1.121 at 90%: the rule's **direction** depends
+on the level, crossing at 97.3%. Two conditions sit behind that — the chain
+started at its own stationary distribution, and regimes differing only in
+volatility — and the module measures what each is worth rather than stating
+them as assumptions.
+
+Fitting carries a variance floor because the likelihood of a normal mixture is
+unbounded: park a component on an observation, shrink its variance, and the
+density diverges. The floor is part of the estimator, and a fit that hits it
+is reported as degenerate — its log-likelihood is a property of the floor
+(-17.80 at 1e-8, -3.99 at 1e-14 on the same forty points) rather than of the
+data.
+
 ## Development
 
 ```bash
