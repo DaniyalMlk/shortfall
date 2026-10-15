@@ -30,13 +30,13 @@ from shortfall.mixture import (
     NormalMixture,
     averaged_shortfall,
     convolve,
+    diversification_gap,
     fit_mixture,
     horizon_mixture,
     mixture_risk,
     occupation_law,
     responsibilities,
     stationary,
-    subadditivity_gap,
     tail_ratio,
 )
 
@@ -297,7 +297,7 @@ class TestSums:
         assert convolve(position, position).quantile(0.99) == pytest.approx(
             99.998, abs=0.002
         )
-        assert subadditivity_gap(position, position, 0.99) == pytest.approx(
+        assert diversification_gap(position, position, 0.99) == pytest.approx(
             99.936, abs=0.01
         )
 
@@ -312,7 +312,7 @@ class TestSums:
             position = NormalMixture.of(
                 [(1.0 - weight, 0.0, 0.01), (weight, 100.0, 0.01)]
             )
-            return subadditivity_gap(position, position, 0.99)
+            return diversification_gap(position, position, 0.99)
 
         def bisect(low: float, high: float, want_positive_above: bool) -> float:
             for _ in range(200):

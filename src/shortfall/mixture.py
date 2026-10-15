@@ -162,13 +162,13 @@ __all__ = [
     "Occupation",
     "averaged_shortfall",
     "convolve",
+    "diversification_gap",
     "fit_mixture",
     "horizon_mixture",
     "mixture_risk",
     "occupation_law",
     "responsibilities",
     "stationary",
-    "subadditivity_gap",
     "tail_ratio",
 ]
 
@@ -570,7 +570,7 @@ def convolve(
     return NormalMixture(tuple(parts))
 
 
-def subadditivity_gap(
+def diversification_gap(
     left: NormalMixture, right: NormalMixture, confidence: float
 ) -> float:
     """``VaR(L + R) - VaR(L) - VaR(R)`` for independent ``L`` and ``R``.
