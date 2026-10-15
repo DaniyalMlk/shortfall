@@ -115,17 +115,17 @@ staying calm 90% gives 0.792.
 rather than a safeguard. The likelihood of a normal mixture is **unbounded**:
 park one component's mean on an observation and shrink its variance, and the
 density at that point diverges. On forty standard normal draws, holding a 2.5%
-component on the first observation, the log-likelihood goes -64.42, -63.76,
--59.37, -50.17, **-40.96** as that component's deviation goes 1, 1e-2, 1e-4,
+component on the first observation, the log-likelihood goes -55.48, -54.87,
+-50.92, -41.71, **-32.50** as that component's deviation goes 1, 1e-2, 1e-4,
 1e-8, 1e-12. There is no maximum to find.
 
 An implementation without a floor does not fail loudly. Fitting those same
 forty observations with nine components walks straight into the spike, and the
 giveaway is that **the answer depends on the floor**: a log-likelihood of
--29.6 at a floor of 1e-8 and -16.0 at 1e-14, from the same data and the same
+-17.80 at a floor of 1e-8 and -3.99 at 1e-14, from the same data and the same
 code. :attr:`Fitted.degenerate` reports it, and it is False on every fit here
 that converged to something real — two components on the same forty points
-gives -61.16 with a smallest deviation of 0.297.
+gives -50.44 with a smallest deviation of 0.177.
 
 Where the fit is identified it works: 20,000 draws from an 85/15 mixture
 recover a 99% expected shortfall within **1.1%**, and 200 draws within 7.1%.
