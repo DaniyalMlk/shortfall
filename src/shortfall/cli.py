@@ -2686,7 +2686,7 @@ def build_parser() -> argparse.ArgumentParser:
             sub.add_argument(
                 "--weights",
                 help="comma-separated portfolio weights; equal weights if omitted. "
-                "Not normalised: weights summing to 0.8 mean 20% in cash.",
+                "Not normalised: weights summing to 0.8 mean 20%% in cash.",
             )
         if shrink:
             sub.add_argument(
@@ -2864,7 +2864,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--threshold",
         type=float,
         default=None,
-        help="fit above this loss instead, as a positive fraction. 0.02 is a 2% loss.",
+        help="fit above this loss instead, as a positive fraction. 0.02 is a 2%% loss.",
     )
     extreme.add_argument(
         "--method",
