@@ -120,6 +120,28 @@ jobs:
         run: |
           python -m venv /tmp/check
           /tmp/check/bin/pip install dist/*.whl
+      # Every subcommand's --help, against the artefact that would be published.
+      # argparse expands help strings through %-formatting, so a literal per
+      # cent sign raises TypeError at display time and nowhere else: the suite
+      # exercises the commands and the commands work. Only --help is broken,
+      # and it is the first thing anybody types. Eight of twenty subcommands
+      # shipped that way.
+      - name: Every subcommand prints help
+        run: |
+          /tmp/check/bin/shortfall --help > /dev/null
+          for sub in $(/tmp/check/bin/python - <<'PY'
+          import argparse
+          from shortfall.cli import build_parser
+          for action in build_parser()._actions:
+              if isinstance(action, argparse._SubParsersAction):
+                  print(" ".join(sorted(action.choices)))
+                  break
+          PY
+          ); do
+            /tmp/check/bin/shortfall "$sub" --help > /dev/null || {
+              echo "shortfall $sub --help failed"; exit 1; }
+          done
+          echo "every subcommand printed help"
       - name: The installed package estimates something
         # A wheel that imports but cannot produce a number is not a working
         # library, so the check runs an estimate end to end and asserts an

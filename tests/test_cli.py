@@ -8,6 +8,7 @@ rather than a traceback through a covariance routine.
 
 from __future__ import annotations
 
+import argparse
 import io
 import json
 import math
@@ -17,7 +18,13 @@ from statistics import NormalDist
 
 import pytest
 
-from shortfall.cli import InputError, main, parse_weights, read_table
+from shortfall.cli import (
+    InputError,
+    build_parser,
+    main,
+    parse_weights,
+    read_table,
+)
 from shortfall.series import Panel
 
 
@@ -2093,3 +2100,60 @@ def test_regime_refuses_a_confidence_outside_the_open_interval(
     code, _ = run("regime", str(sample_file(tmp_path / "r.csv")), "--confidence", "1.0")
     assert code == 2
     assert "between zero and one" in capsys.readouterr().err
+
+
+# -- help text ---------------------------------------------------------------
+
+
+def subcommand_names() -> list[str]:
+    """Every subcommand, read off the parser rather than listed by hand.
+
+    A hand-written list is the reason this class of bug survives: the
+    subcommand added next week is not in it.
+    """
+    parser = build_parser()
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return sorted(action.choices)
+    raise AssertionError("the parser has no subcommands")
+
+
+def test_the_parser_still_has_every_subcommand() -> None:
+    # Guards the guard: if introspection stops finding subcommands, the sweep
+    # below would pass by testing nothing at all.
+    names = subcommand_names()
+    assert len(names) >= 20
+    assert "risk" in names
+
+
+@pytest.mark.parametrize("subcommand", subcommand_names())
+def test_every_subcommand_prints_help(subcommand: str) -> None:
+    """``--help`` must print help, not raise.
+
+    argparse expands every help string through ``%``-formatting so that
+    ``%(default)s`` works, which makes a literal per cent sign a format
+    specifier. ``20% in cash`` is read as the ``%i`` conversion, handed a
+    dict, and raises TypeError. Nothing else catches it: the suite exercises
+    the commands, and the commands run fine. Only ``--help`` is broken, which
+    is the first thing anybody types.
+    """
+    stream = io.StringIO()
+    with pytest.raises(SystemExit) as exited:
+        main([subcommand, "--help"], stream=stream)
+    assert exited.value.code == 0
+
+
+def test_the_per_cent_signs_survive_the_escaping(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Escaped correctly, not deleted.
+
+    ``%%`` is the fix, and a careless one is to drop the sign instead. Both
+    places that carried a literal per cent still read as per cent.
+    """
+    for subcommand, wanted in (("risk", "20% in cash"), ("tail", "2% loss")):
+        with pytest.raises(SystemExit):
+            main([subcommand, "--help"])
+        printed = capsys.readouterr().out
+        collapsed = " ".join(printed.split())
+        assert wanted in collapsed, (subcommand, wanted)
