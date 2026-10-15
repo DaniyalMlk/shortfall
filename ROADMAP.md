@@ -1285,3 +1285,112 @@ The radius has to be named by a probability because the phrase does not
 distinguish the sets it refers to. A ball of radius 3 holds 99.73% of the
 probability over one factor, 97.07% over three, 46.79% over ten and 1.9e-11
 over fifty. The 99% radius runs the other way: 2.58, 3.37, 4.82, 8.73.
+
+## Phase 27 — A book with two states, and the risk that is not an average
+
+- [x] A validated finite normal mixture, with its moments in closed form from
+      the normal's own rather than by quadrature
+- [x] A quantile bracketed by the components' own and solved by a safeguarded
+      Newton step, because a bimodal density defeats Newton alone
+- [x] Exact value at risk and expected shortfall: only the quantile is solved,
+      and the tail mean is closed form given it
+- [x] The posterior probability that a tail loss came from each regime
+- [x] The weighted average of the regimes' own expected shortfalls, computed so
+      the gap to the right answer can be measured rather than described
+- [x] Exact convolution of independent mixtures, and the failure of value at
+      risk to be subadditive stated from it rather than simulated
+- [x] Expectation maximisation with the variance floor the unbounded likelihood
+      requires, and the degeneracy reported
+- [x] The horizon law under a two-state Markov chain, as an occupation-time
+      mixture with `h + 1` components rather than `2 ** h` paths
+- [x] A `regime` subcommand
+
+### What the phase is for
+
+Every distribution in Phase 3 has one mode. A risk committee's description of
+its own book has two: a calm state and a stressed one. A finite mixture is the
+smallest model that says that, and it is also the model whose arithmetic is
+most reliably done wrong, because the word "mixture" invites averaging and
+almost nothing here averages.
+
+The running example is a stressed regime happening 5% of the time at four
+times the volatility. Variance 1.75, excess kurtosis 10.47.
+
+### The expected shortfall of a mixture is not the mixture of expected shortfalls
+
+`sum(w_i * ES_i)` answers a different question — the loss if a regime were
+drawn first and *then* a bad day inside it. The tail is not drawn that way.
+
+| confidence | VaR | ES | averaged | error | stressed share of the tail |
+|---|---|---|---|---|---|
+| 90% | 1.366 | 2.244 | 2.018 | -10.1% | 18.3% |
+| 95% | 1.806 | 2.926 | 2.372 | -18.9% | 32.6% |
+| 97.5% | 2.279 | 3.844 | 2.688 | -30.1% | 56.9% |
+| 99% | 3.445 | 5.607 | 3.065 | -45.3% | 97.3% |
+| 99.9% | 8.215 | 9.684 | 3.872 | -60.0% | 100.0% |
+
+One-signed, and growing with the level, so it is worst where the number is
+used. The last column is why: a 5% regime is responsible for 97.3% of the
+losses past the 99th percentile. The error is exactly zero when the two
+components are identical, which is the only case in which the averaging
+question and the real one coincide.
+
+### Fat where it is measured, thin in the limit
+
+The ratio of expected shortfall to value at risk is scale free for a zero-mean
+normal, so the mixture's excess over it is the entire fat-tail signal: 42.1%
+at 99%, 3.5% at `1 - 1e-4`, 1.2% at `1 - 1e-6`, 0.2% at `1 - 1e-12`. A mixture
+of normals has every moment and is asymptotically a normal tail, so an
+argument from its limiting behaviour is about a region no capital rule refers
+to.
+
+### The subadditivity failure lives in a window of width half the tail
+
+Two independent positions losing 100 with probability 0.9%: at 99% each has a
+value at risk of 0.031 and the pair has 99.998. Bisecting the stressed weight
+from both sides, the violation holds on **(0.004943, 0.010000)** and nowhere
+else. The upper edge is exactly `1 - c`, above which each position's own
+quantile is already in the stressed region. The lower edge is where the pair's
+chance of at least one stress reaches the same threshold, `1 - sqrt(c) =
+0.0050126`, displaced by the components having width.
+
+### The square-root rule, and the two conditions behind the table
+
+Conditional on the regime sequence a horizon sum is normal and depends on the
+sequence only through the occupation counts, so the law has `h + 1` components.
+Against square-root scaling, under a chain staying calm 98% and stressed 90%:
+
+| periods | 99% | 90% |
+|---|---|---|
+| 5 | 0.958 | 1.062 |
+| 10 | 0.924 | 1.121 |
+| 60 | 0.797 | 1.349 |
+
+The direction depends on the confidence level, crossing at **97.41%** at five
+periods, 97.32% at ten and 97.00% at sixty. In the tail the rule overstates,
+because aggregation diversifies the regime itself: excess kurtosis falls from
+7.65 at one period to 1.74 at sixty.
+
+Both conditions behind that are load-bearing. The chain is started at its own
+stationary distribution; started elsewhere the per-period risk drifts towards
+it and the ratio reports the starting point — 1.47 against 1.09 on the bundled
+returns, which is how the error was found. And the regimes differ only in
+volatility; give the stressed one a mean and the drift accumulates linearly
+against a quantile scaling as a square root, taking the ten-period ratio from
+0.924 at a mean of zero to 1.043 at 0.5 and 1.361 at 2.0, crossing one at
+**0.319**. "The square-root rule overstates" is a statement about a
+volatility-only model.
+
+### The likelihood has no maximum
+
+Park a component on an observation and shrink its variance: the density
+diverges. On forty standard normal draws the log-likelihood climbs -55.48,
+-54.87, -50.92, -41.71, -32.50 as that component's deviation goes 1 to 1e-12.
+
+An implementation without a floor does not fail loudly. Nine components on
+those forty points walks into the spike, and the giveaway is that the answer
+depends on the floor: -17.80 at 1e-8 and -3.99 at 1e-14, same data, same code.
+Two components on the same points gives -50.44 with a smallest deviation of
+0.177 and is not flagged. Where the fit is identified it works — 20,000 draws
+recover a 99% expected shortfall within 1.1%, 200 draws within 7.1% — and the
+starts are sample quantiles, so the same data gives the same answer twice.

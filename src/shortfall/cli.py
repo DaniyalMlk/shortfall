@@ -61,6 +61,13 @@ from .extreme import TailMethod, extreme_risk, mean_excess_curve
 from .factors import attribute_risk, fit_factor_model
 from .historical import historical_risk
 from .horizon import Innovations, horizon_risk
+from .mixture import (
+    DEFAULT_FLOOR,
+    fit_mixture,
+    horizon_mixture,
+    mixture_risk,
+    stationary,
+)
 from .parametric import Distribution, normal_risk, portfolio_risk, student_t_risk
 from .quadratic import (
     Exposure,
@@ -2516,6 +2523,124 @@ def command_worst_case(arguments: argparse.Namespace, stream: TextIO) -> dict[st
     return payload
 
 
+def command_regime(arguments: argparse.Namespace, stream: TextIO) -> dict[str, Any]:
+    """Fit two regimes to a book and report the tail they produce.
+
+    The command's reason for existing is the third and fourth columns of its
+    first table. A desk that believes its book has a calm state and a stressed
+    one will reach for the weighted average of the two states' risk, and that
+    number is not the book's risk: the tail is almost entirely the stressed
+    state whatever its weight, and the average is low by tens of per cent at
+    the levels anybody reports.
+    """
+    parsed = read_table(arguments.returns)
+    panel = parsed.panel
+    weights = parse_weights(arguments.weights, panel)
+    portfolio = panel.portfolio(weights)
+    losses = [-value for value in portfolio.values]
+    fitted = fit_mixture(losses, arguments.components, floor=arguments.floor)
+    risk = mixture_risk(fitted.mixture, arguments.confidence)
+    ordered = sorted(
+        range(len(fitted.mixture.components)),
+        key=lambda index: fitted.mixture.components[index].deviation,
+    )
+    payload: dict[str, Any] = {
+        "observations": panel.observations,
+        "components": arguments.components,
+        "confidence": arguments.confidence,
+        "log_likelihood": fitted.log_likelihood,
+        "iterations": fitted.iterations,
+        "converged": fitted.converged,
+        "degenerate": fitted.degenerate,
+        "excess_kurtosis": fitted.mixture.excess_kurtosis,
+        "value_at_risk": risk.value_at_risk,
+        "expected_shortfall": risk.expected_shortfall,
+        "averaged_shortfall": risk.averaged,
+        "averaging_error": risk.averaging_error,
+        "regimes": [
+            {
+                "weight": fitted.mixture.components[index].weight,
+                "mean": fitted.mixture.components[index].mean,
+                "deviation": fitted.mixture.components[index].deviation,
+                "tail_share": risk.responsibility[index],
+            }
+            for index in ordered
+        ],
+    }
+    if arguments.horizon > 1:
+        calm = fitted.mixture.components[ordered[0]]
+        stressed = fitted.mixture.components[ordered[-1]]
+        chain = (arguments.stay_calm, arguments.stay_stressed)
+        # The chain's own long-run distribution, not the fitted weights. A
+        # start anywhere else makes the ratio below a statement about the
+        # starting point rather than about the regimes.
+        start = stationary(chain)
+        one = mixture_risk(
+            horizon_mixture(calm, stressed, chain, start, 1), arguments.confidence
+        ).value_at_risk
+        many = mixture_risk(
+            horizon_mixture(calm, stressed, chain, start, arguments.horizon),
+            arguments.confidence,
+        ).value_at_risk
+        payload["horizon"] = arguments.horizon
+        payload["horizon_value_at_risk"] = many
+        payload["square_root_value_at_risk"] = one * math.sqrt(arguments.horizon)
+        payload["square_root_ratio"] = many / (one * math.sqrt(arguments.horizon))
+        payload["stationary_calm"] = start[0]
+    if arguments.json:
+        return payload
+
+    print(
+        f"{panel.observations} observations, {arguments.components} regimes, "
+        f"log-likelihood {fitted.log_likelihood:.4f} after {fitted.iterations} "
+        f"iterations.\n",
+        file=stream,
+    )
+    if fitted.degenerate:
+        print(
+            "A component is sitting on the variance floor. The likelihood of a "
+            "normal mixture is unbounded, so this is the search running away "
+            "rather than converging, and the fit below is a property of the "
+            "floor as much as of the data.\n",
+            file=stream,
+        )
+    rows = [["regime", "weight", "mean", "deviation", "share of the tail"]]
+    for one_regime in payload["regimes"]:
+        rows.append(
+            [
+                "calm" if one_regime is payload["regimes"][0] else "stressed",
+                f"{one_regime['weight']:.4f}",
+                f"{one_regime['mean']:+.6f}",
+                f"{one_regime['deviation']:.6f}",
+                f"{one_regime['tail_share']:.4f}",
+            ]
+        )
+    table(rows, stream)
+    print(
+        f"\nAt {100 * arguments.confidence:g}% the value at risk is "
+        f"{risk.value_at_risk:.6f} and the expected shortfall "
+        f"{risk.expected_shortfall:.6f}. Averaging the regimes' own expected "
+        f"shortfalls gives {risk.averaged:.6f}, which is "
+        f"{100 * risk.averaging_error:+.1f}% -- the tail is "
+        f"{100 * payload['regimes'][-1]['tail_share']:.1f}% the widest regime, "
+        "not a blend of the two.",
+        file=stream,
+    )
+    if arguments.horizon > 1:
+        print(
+            f"\nOver {arguments.horizon} periods under a chain staying calm "
+            f"{arguments.stay_calm:g} and stressed {arguments.stay_stressed:g}, "
+            f"the value at risk is {payload['horizon_value_at_risk']:.6f} against "
+            f"{payload['square_root_value_at_risk']:.6f} from the square-root "
+            f"rule, a ratio of {payload['square_root_ratio']:.4f}, from the "
+            f"chain's own stationary start of {start[0]:.4f} calm. Which side "
+            "of one that lands on depends on the confidence level and on "
+            "whether the regimes differ in mean as well as in volatility.",
+            file=stream,
+        )
+    return payload
+
+
 COMMANDS = {
     "worst-case": command_worst_case,
     "risk": command_risk,
@@ -2536,6 +2661,7 @@ COMMANDS = {
     "bounds": command_bounds,
     "clean": command_clean,
     "curvature": command_curvature,
+    "regime": command_regime,
 }
 
 
@@ -3162,6 +3288,39 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="C",
         help="blend the posterior back towards the prior: 1 holds the view exactly",
     )
+
+    regime = subparsers.add_parser(
+        "regime",
+        help="fit a calm and a stressed state, and the tail they produce together",
+        description=(
+            "Fits a finite normal mixture to the portfolio's losses and reports "
+            "the tail it implies, beside the weighted average of the regimes' "
+            "own expected shortfalls. The gap between those two is the point: "
+            "the tail of a mixture is almost entirely its widest component "
+            "whatever that component's weight, so the average is low, and it is "
+            "worse at the levels that get reported. With a horizon it also "
+            "compares the aggregated risk against square-root scaling, which "
+            "under regime switching is wrong in a direction that depends on the "
+            "confidence level."
+        ),
+    )
+    regime.add_argument("returns", type=Path, help="CSV of periodic returns")
+    regime.add_argument(
+        "--weights", default=None, help="portfolio weights; equal weights if omitted"
+    )
+    regime.add_argument("--components", type=int, default=2, help="how many regimes")
+    regime.add_argument("--confidence", type=float, default=0.99)
+    regime.add_argument(
+        "--floor",
+        type=float,
+        default=DEFAULT_FLOOR,
+        help="the smallest deviation a regime may take; the likelihood is unbounded without one",
+    )
+    regime.add_argument(
+        "--horizon", type=int, default=1, help="periods to aggregate over, if more than one"
+    )
+    regime.add_argument("--stay-calm", type=float, default=0.98)
+    regime.add_argument("--stay-stressed", type=float, default=0.90)
 
     bars = subparsers.add_parser(
         "bars",
