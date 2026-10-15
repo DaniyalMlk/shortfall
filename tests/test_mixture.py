@@ -35,6 +35,7 @@ from shortfall.mixture import (
     mixture_risk,
     occupation_law,
     responsibilities,
+    stationary,
     subadditivity_gap,
     tail_ratio,
 )
@@ -614,3 +615,77 @@ class TestRefusals:
     def test_a_threshold_nothing_can_reach(self) -> None:
         with pytest.raises(BadMixture, match="cannot be attributed"):
             responsibilities(STRESSED, 1e6)
+
+
+class TestTheStationaryStart:
+    """The default start, and what starting elsewhere does."""
+
+    def test_it_is_the_fixed_point(self) -> None:
+        chain = (0.98, 0.90)
+        share = stationary(chain)
+        forward = (
+            share[0] * chain[0] + share[1] * (1.0 - chain[1]),
+            share[0] * (1.0 - chain[0]) + share[1] * chain[1],
+        )
+        assert forward == pytest.approx(share, abs=1e-15)
+        assert share[0] == pytest.approx(5.0 / 6.0, rel=1e-15)
+
+    def test_the_occupation_share_settles_there(self) -> None:
+        # Started away from the stationary distribution, the running share
+        # approaches it from below and the shortfall decays as 1/n: the
+        # transient is a fixed amount of time spent in the wrong state, and
+        # averaging it over more periods is the only thing that dilutes it.
+        chain = (0.98, 0.90)
+        gaps = [
+            (5.0 / 6.0 - occupation_law(chain, (0.2, 0.8), periods).expected / periods)
+            * periods
+            for periods in (50, 100, 200, 400)
+        ]
+        for one in gaps:
+            assert one == pytest.approx(5.28, abs=0.02)
+
+    def test_an_absorbing_chain_has_no_single_one(self) -> None:
+        with pytest.raises(BadMixture, match="never leaves either state"):
+            stationary((1.0, 1.0))
+
+    @pytest.mark.parametrize(
+        ("stressed_mean", "want"), [(0.0, 0.9235), (0.5, 1.0427), (2.0, 1.3608)]
+    )
+    def test_a_regime_mean_changes_the_direction(
+        self, stressed_mean: float, want: float
+    ) -> None:
+        chain = (0.98, 0.90)
+        start = stationary(chain)
+        calm = Component(1.0, 0.0, 1.0)
+        stressed = Component(1.0, stressed_mean, 4.0)
+        one = mixture_risk(
+            horizon_mixture(calm, stressed, chain, start, 1), 0.99
+        ).value_at_risk
+        ten = mixture_risk(
+            horizon_mixture(calm, stressed, chain, start, 10), 0.99
+        ).value_at_risk
+        assert ten / (one * math.sqrt(10.0)) == pytest.approx(want, abs=0.001)
+
+    def test_where_the_mean_makes_the_rule_exact(self) -> None:
+        chain = (0.98, 0.90)
+        start = stationary(chain)
+
+        def ratio(stressed_mean: float) -> float:
+            calm = Component(1.0, 0.0, 1.0)
+            stressed = Component(1.0, stressed_mean, 4.0)
+            one = mixture_risk(
+                horizon_mixture(calm, stressed, chain, start, 1), 0.99
+            ).value_at_risk
+            ten = mixture_risk(
+                horizon_mixture(calm, stressed, chain, start, 10), 0.99
+            ).value_at_risk
+            return ten / (one * math.sqrt(10.0))
+
+        low, high = 0.0, 2.0
+        for _ in range(80):
+            middle = 0.5 * (low + high)
+            if ratio(middle) < 1.0:
+                low = middle
+            else:
+                high = middle
+        assert 0.5 * (low + high) == pytest.approx(0.3189, abs=5e-4)

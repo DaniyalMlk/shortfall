@@ -109,6 +109,18 @@ rather than about the regimes: at ten periods and 99%, a chain staying calm
 99.9% of the time gives 0.995, one staying calm 98% gives 0.924 and one
 staying calm 90% gives 0.792.
 
+Two conditions sit behind that table and both change the answer. The chain is
+started at its own stationary distribution, from :func:`stationary`; start it
+anywhere else and the risk per period drifts towards that distribution, so the
+ratio reports the starting point rather than the regimes. And the regimes
+differ only in volatility. Give the stressed one a mean and the drift
+accumulates linearly while the rule scales a quantile as a square root, which
+pushes the ratio up: at ten periods and 99%, 0.924 at a stressed mean of zero,
+1.043 at 0.5 and 1.361 at 2.0, crossing one at **0.319** — a third of the calm
+regime's own standard deviation. So "the square-root rule overstates" is a
+statement about a volatility-only model, and the general statement is only
+that the rule is wrong in a direction nothing about it discloses.
+
 ## Fitting: the likelihood has no maximum
 
 :func:`fit_mixture` carries a variance floor, and it is part of the estimator
@@ -155,6 +167,7 @@ __all__ = [
     "mixture_risk",
     "occupation_law",
     "responsibilities",
+    "stationary",
     "subadditivity_gap",
     "tail_ratio",
 ]
@@ -782,6 +795,26 @@ def occupation_law(
         periods=periods,
         probability=tuple(table[count][0] + table[count][1] for count in range(periods + 1)),
     )
+
+
+def stationary(persistence: tuple[float, float]) -> tuple[float, float]:
+    """The chain's long-run distribution over its two states.
+
+    The right default for a horizon calculation, and not the same thing as
+    the mixture's own component weights. Starting the chain somewhere other
+    than here makes the horizon risk per period drift towards this
+    distribution, which shows up as a square-root ratio that says more about
+    the starting point than about the regimes.
+    """
+    stay_zero, stay_one = persistence
+    leaving = (1.0 - stay_zero) + (1.0 - stay_one)
+    if leaving <= 0.0:
+        raise BadMixture(
+            "a chain that never leaves either state has no single stationary "
+            "distribution; name the starting one instead"
+        )
+    share = (1.0 - stay_one) / leaving
+    return (share, 1.0 - share)
 
 
 def horizon_mixture(
