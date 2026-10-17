@@ -15,6 +15,40 @@ risk and expected shortfall, Euler risk contributions and risk parity, factor
 models and risk attribution, drawdown and the path statistics, and a command
 line over all of it.
 
+## What is checked, and against what
+
+The claim above is that the numerics are checked against things outside this
+repository. These are the figures that says. Each one is produced by an
+example that runs in CI and exits non-zero if the figure moves, so none of
+them is a number somebody typed here once:
+
+| Check | Result |
+| --- | --- |
+| Basel's 99% value at risk under a normal | 2.326348, against the published 2.3263 |
+| Basel's 97.5% expected shortfall, the measure that replaced it | 2.337803, against the published 2.3378 |
+| The gap between the two, which is the point of the switch | 0.49% under a normal — and 10.99% under a t(3) |
+| A fitted tail at 99.99%, against a truth the sample cannot see | biased +0.2% |
+| Historical simulation at the same point | biased -21.1%, in the same direction every time |
+| A fitted normal at the same point | biased -59.6%, with the *smallest* spread of the three |
+| What "three sigma" names over fifty factors | 1.85e-11 of the probability, not 99.73% |
+
+The last three rows are one result. An estimator that varies is telling you it
+is uncertain; the normal here is precise, consistent, and wrong in the same
+direction every single time, which is the failure mode that does not announce
+itself. That is the reason this library reports the sample behind a tail
+number rather than only the number.
+
+```bash
+python examples/basel_equivalence.py    # the published calibration
+python examples/tail_comparison.py      # fitted against historical, past the data
+python examples/worst_case_scenario.py  # joint stress against one factor at a time
+```
+
+Each exits non-zero if a figure moves. [A worked example](#a-worked-example)
+below goes through the first of them in full.
+
+Behind them: 2074 tests, run on Python 3.10 through 3.13.
+
 ## Installing
 
 ```bash
