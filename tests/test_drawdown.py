@@ -200,6 +200,56 @@ def test_an_unrecovered_drawdown_reports_no_recovery() -> None:
     assert worst.underwater_periods == 2
 
 
+@pytest.mark.parametrize(
+    ("name", "path"),
+    [
+        ("strictly rising", [0.001] * 5),
+        ("flat", [0.0] * 5),
+        ("a single observation", [0.01]),
+    ],
+)
+def test_a_path_that_never_declined_spent_no_time_under_water(
+    name: str, path: list[float]
+) -> None:
+    """Zero is the right answer and it has to be said, not approached.
+
+    All three paths take the same branch: no episode exists, so the depth is
+    zero and the peak and the trough are the same point. Scanning forward for
+    a recovery from there lands on the next point at or above the peak, which
+    on a rising curve is the very next one, and the drawdown then reports a
+    period under water that nobody spent.
+
+    The three statistics have to agree. ``decline_periods`` was always zero
+    here, so a non-zero ``underwater_periods`` for the same episode is the two
+    of them describing different things.
+    """
+    worst = maximum_drawdown(path)
+    assert worst.depth == pytest.approx(0.0)
+    assert worst.peak_position == worst.trough_position
+    assert worst.recovery_position == worst.peak_position
+    assert worst.decline_periods == 0
+    assert worst.underwater_periods == 0
+    assert worst.recovery_periods == 0
+    # Nothing to recover from is recovered, not outstanding: `recovered` is
+    # False only when the sample ends below a peak, which is not this case.
+    assert worst.recovered
+
+    assert longest_underwater(path).underwater_periods == 0
+
+
+def test_a_real_decline_still_finds_its_recovery() -> None:
+    """The guard above must not have switched recovery detection off.
+
+    One point down and back up: the depth is non-zero, so the scan runs as
+    before and lands on the point that regained the peak.
+    """
+    worst = maximum_drawdown([0.01, -0.02, 0.03, 0.01])
+    assert worst.depth > 0.0
+    assert worst.recovery_position == 3
+    assert worst.underwater_periods == 2
+    assert worst.recovered
+
+
 def test_the_index_labels_the_valuations_not_the_moves() -> None:
     with pytest.raises(ValueError, match="one more point"):
         maximum_drawdown(PATH, index=["a", "b", "c", "d", "e"])

@@ -204,7 +204,17 @@ def maximum_drawdown(
             best_peak = peak_position
             best_trough = position
 
-    recovery = _recovery_after(curve, best_peak, best_trough)
+    # A depth of zero means the curve never fell below a running peak, so
+    # there is no episode to recover from. Asking `_recovery_after` anyway
+    # finds the next point at or above the peak — position one on any rising
+    # path — and the drawdown then claims a period under water that nobody
+    # spent. The peak is its own recovery here, which makes `decline_periods`,
+    # `underwater_periods` and `recovery_periods` agree at zero.
+    recovery = (
+        best_peak
+        if best_depth == 0.0
+        else _recovery_after(curve, best_peak, best_trough)
+    )
     return Drawdown(
         depth=best_depth,
         peak_position=best_peak,
