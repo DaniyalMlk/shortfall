@@ -41,6 +41,8 @@ jobs:
         run: mypy --strict
       - name: Lint
         run: ruff check .
+      - name: Every subcommand's --help renders
+        run: python scripts/check_help.py
 
   example:
     name: The worked example reproduces its published figures
