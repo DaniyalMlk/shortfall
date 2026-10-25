@@ -572,24 +572,45 @@ def _compounded_by_hand(
     anything other than the product of its own steps this disagrees, and it
     disagrees whatever the quantile method does afterwards.
     """
+    out = []
+    for path in _paths_by_hand(fitted, data, steps=steps, paths=paths, seed=seed):
+        growth = 1.0
+        for step_return in path:
+            # `mean + residual` first, then `1 + that`. The association has to
+            # match the module's or the two disagree in the last two bits of the
+            # quantile, which would turn an exact check into a tolerance for no
+            # reason: floating-point addition is not associative.
+            growth *= 1.0 + step_return
+        out.append(growth - 1.0)
+    return out
+
+
+def _running_sum(values: Sequence[float]) -> float:
+    """Left-to-right addition into a float, as the simulation does it."""
+    total = 0.0
+    for value in values:
+        total += value
+    return total
+
+
+def _paths_by_hand(
+    fitted: Garch, data: Sequence[float], *, steps: int, paths: int, seed: int
+) -> list[list[float]]:
+    """The module's own draws, re-run here, as per-period returns."""
     rng = random.Random(seed)
     residuals = fitted.standardised(data)
     start = fitted.next_variance(data[-1])
     out = []
     for _ in range(paths):
         variance = start
-        growth = 1.0
+        one: list[float] = []
         for _step in range(steps):
             residual = math.sqrt(variance) * residuals[rng.randrange(len(residuals))]
-            # `mean + residual` first, then `1 + that`. The association has to
-            # match the module's or the two disagree in the last two bits of the
-            # quantile, which would turn an exact check into a tolerance for no
-            # reason: floating-point addition is not associative.
-            growth *= 1.0 + (fitted.mean + residual)
+            one.append(fitted.mean + residual)
             variance = (
                 fitted.omega + fitted.alpha * residual * residual + fitted.beta * variance
             )
-        out.append(growth - 1.0)
+        out.append(one)
     return out
 
 
@@ -637,6 +658,51 @@ def test_the_analytic_check_can_tell_the_two_accumulations_apart() -> None:
         )
         assert result.additive_volatility == pytest.approx(result.analytic_volatility, rel=0.015)
         assert result.simulated_volatility < 0.97 * result.analytic_volatility
+
+
+def test_the_accumulation_agrees_with_the_one_the_series_module_already_had() -> None:
+    """The reference is another module of this library, which had it right.
+
+    ``ReturnSeries.cumulative`` compounds under the simple convention and takes
+    ``expm1`` of the sum under the log one. It has done since the series module
+    was written, three modules away from the horizon simulation, which
+    reimplemented the arithmetic and reimplemented it as a sum. So the check
+    here is not against a formula written for the occasion: it is against the
+    answer the library gives when asked the same question somewhere else, and
+    the two agree bit for bit under both conventions.
+    """
+    data = garch_path()
+    fitted = fit_garch(data)
+    drawn = _paths_by_hand(fitted, data, steps=10, paths=MIN_PATHS, seed=21)
+    through_series = [
+        ReturnSeries("path", tuple(one), Convention.SIMPLE).cumulative() for one in drawn
+    ]
+    result = horizon_risk(fitted, data, steps=10, paths=MIN_PATHS, seed=21)
+    assert result.value_at_risk == historical_risk(
+        through_series, confidence=CONFIDENCE
+    ).value_at_risk
+
+    logged = fit_garch(ReturnSeries("fund", tuple(data), Convention.LOG))
+    under_log = horizon_risk(logged, data, steps=10, paths=MIN_PATHS, seed=21)
+    # The series module reports a *simple* cumulative return under either
+    # convention, so the comparison runs through expm1 — which is also the
+    # reason the horizon figure under the log convention is a log loss and not
+    # directly comparable to the one above.
+    # A running total, and deliberately not `sum` or `math.fsum`. The module
+    # keeps a running total, and from CPython 3.12 the built-in `sum` applies
+    # compensated summation to floats, so it agrees with `math.fsum` rather than
+    # with a loop: writing `sum(one)` here passes on 3.10 and 3.11 and fails on
+    # 3.12 and 3.13, one unit in the last place out on 587 of these 1,000 paths.
+    # The exact summation is the better arithmetic — it is 2e-17 away, against a
+    # Monte Carlo standard error of 4e-3 — which makes it a reason not to claim
+    # bitwise agreement with it rather than a reason to change the accumulation.
+    assert under_log.value_at_risk == historical_risk(
+        [_running_sum(one) for one in drawn], confidence=CONFIDENCE
+    ).value_at_risk
+    assert under_log.value_at_risk != historical_risk(
+        [math.fsum(one) for one in drawn], confidence=CONFIDENCE
+    ).value_at_risk
+    assert -math.expm1(-under_log.value_at_risk) < result.value_at_risk
 
 
 def test_adding_simple_returns_overstates_the_loss_and_worse_with_the_horizon() -> None:
