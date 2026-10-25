@@ -16,13 +16,17 @@ every innovation is normal, because the variance path is stochastic.
 
 from __future__ import annotations
 
+import csv
 import math
 import random
 import statistics
+import sys
+from collections.abc import Sequence
+from pathlib import Path
 
 import pytest
 
-from shortfall.historical import HistoricalRisk, QuantileMethod
+from shortfall.historical import HistoricalRisk, QuantileMethod, historical_risk
 from shortfall.horizon import (
     BATCHES,
     MAX_PATHS,
@@ -33,7 +37,7 @@ from shortfall.horizon import (
     horizon_risk,
 )
 from shortfall.parametric import normal_risk, student_t_risk
-from shortfall.series import TooShort
+from shortfall.series import Convention, ReturnSeries, TooShort
 from shortfall.volatility import Garch, Innovation, fit_garch
 
 TRUE = (2.0e-6, 0.08, 0.90)
@@ -142,6 +146,13 @@ def test_the_simulated_volatility_matches_the_analytic_aggregation(steps: int) -
     does. Averaged over six independent runs the ratio came to 1.0001; a single run
     of 20,000 paths carries about half a percent of noise in an estimate of a
     standard deviation, so the bound here is 2%.
+
+    Against the *additive* volatility, which is what the analytic aggregation is a
+    statement about. The variance of a product is not the sum of the variances, so
+    under the simple convention there is no closed form for the compounded
+    accumulation to be checked against — and the check that does exist would
+    quietly loosen into a check on the compounding gap if it were pointed at the
+    compounded figure.
     """
     data = garch_path()
     fitted = fit_garch(data)
@@ -155,7 +166,7 @@ def test_the_simulated_volatility_matches_the_analytic_aggregation(steps: int) -
             innovations=Innovations.PARAMETRIC,
             seed=seed,
         )
-        ratios.append(result.simulated_volatility / result.analytic_volatility)
+        ratios.append(result.additive_volatility / result.analytic_volatility)
     assert statistics.fmean(ratios) == pytest.approx(1.0, abs=0.01)
     assert all(abs(ratio - 1.0) < 0.02 for ratio in ratios)
 
@@ -170,7 +181,9 @@ def test_the_horizon_return_is_leptokurtic_even_under_normal_innovations() -> No
     variance path is stochastic: a large draw early raises the variance for every
     remaining step. Measured over ten runs of 40,000 paths, the ratio of value at
     risk to volatility goes from 2.334 at one step — the normal's 2.326, as it must
-    — to 2.480 at ten.
+    — to 2.480 at ten on the summed accumulation and 2.421 on the compounded one.
+    Compounding shaves the tail by more than it shaves the standard deviation, so
+    it takes a little of the leptokurtosis back out; it does not account for it.
 
     So the two square-root-of-time comparisons point in opposite directions on the
     same day: the horizon volatility came 0.8% below the scaled figure and the
@@ -187,8 +200,13 @@ def test_the_horizon_return_is_leptokurtic_even_under_normal_innovations() -> No
     )
     one_ratio = one.value_at_risk / one.simulated_volatility
     ten_ratio = ten.value_at_risk / ten.simulated_volatility
+    ten_additive = ten.additive_risk.value_at_risk / ten.additive_volatility
     assert one_ratio == pytest.approx(2.326, abs=0.04)
     assert ten_ratio > one_ratio + 0.08
+    assert ten_additive > ten_ratio
+    # Both accumulations, pinned, so neither figure can drift behind the other.
+    assert ten_ratio == pytest.approx(2.421, abs=0.03)
+    assert ten_additive == pytest.approx(2.480, abs=0.03)
     assert ten.scaling_against_square_root_of_time < 1.0
     assert ten.quantile_against_square_root_of_time > 1.02
     # The two comparisons disagree, which is the whole content of the test.
@@ -368,19 +386,28 @@ def test_the_relative_error_is_reported_and_small_at_a_serious_path_count() -> N
 
 def test_the_error_is_infinite_rather_than_a_division_by_zero() -> None:
     """A value at risk of exactly zero is degenerate, not an occasion to crash."""
+    zero = _zero_risk()
     empty = HorizonRisk(
-        risk=_zero_risk(),
+        risk=zero,
+        additive_risk=zero,
+        convention=Convention.SIMPLE,
         steps=1,
         paths=MIN_PATHS,
         innovations=Innovations.PARAMETRIC,
         simulated_volatility=0.0,
+        additive_volatility=0.0,
         analytic_volatility=0.0,
         square_root_of_time_volatility=0.0,
         one_step_value_at_risk=0.0,
         standard_error=0.0,
+        ruined_paths=0,
     )
     assert empty.relative_standard_error == math.inf
     assert empty.quantile_against_square_root_of_time == math.inf
+    assert empty.loss_against_square_root_of_time == math.inf
+    # The convention gap is a ratio too, and a zero denominator there is the
+    # same degeneracy rather than a different one.
+    assert empty.compounding_factor == math.inf
 
 
 def _zero_risk() -> HistoricalRisk:
@@ -539,3 +566,390 @@ def test_the_horizon_quantile_crosses_square_root_of_time_in_both_directions() -
     assert all(ratio > 1.0 for ratio in normal_ratios)
     assert statistics.fmean(normal_ratios) > statistics.fmean(fat_ratios) + 0.04
     assert statistics.fmean(fat_ratios) < 1.03
+
+
+# -- the accumulation has a convention ---------------------------------------
+
+
+def _compounded_by_hand(
+    fitted: Garch, data: Sequence[float], *, steps: int, paths: int, seed: int
+) -> list[float]:
+    """Re-run the recursion here and compound the steps explicitly.
+
+    A reference by construction rather than by formula: the same draws in the
+    same order, accumulated the long way. If the module's compounded total is
+    anything other than the product of its own steps this disagrees, and it
+    disagrees whatever the quantile method does afterwards.
+    """
+    out = []
+    for path in _paths_by_hand(fitted, data, steps=steps, paths=paths, seed=seed):
+        growth = 1.0
+        for step_return in path:
+            # `mean + residual` first, then `1 + that`. The association has to
+            # match the module's or the two disagree in the last two bits of the
+            # quantile, which would turn an exact check into a tolerance for no
+            # reason: floating-point addition is not associative.
+            growth *= 1.0 + step_return
+        out.append(growth - 1.0)
+    return out
+
+
+def _running_sum(values: Sequence[float]) -> float:
+    """Left-to-right addition into a float, as the simulation does it."""
+    total = 0.0
+    for value in values:
+        total += value
+    return total
+
+
+def _paths_by_hand(
+    fitted: Garch, data: Sequence[float], *, steps: int, paths: int, seed: int
+) -> list[list[float]]:
+    """The module's own draws, re-run here, as per-period returns."""
+    rng = random.Random(seed)
+    residuals = fitted.standardised(data)
+    start = fitted.next_variance(data[-1])
+    out = []
+    for _ in range(paths):
+        variance = start
+        one: list[float] = []
+        for _step in range(steps):
+            residual = math.sqrt(variance) * residuals[rng.randrange(len(residuals))]
+            one.append(fitted.mean + residual)
+            variance = (
+                fitted.omega + fitted.alpha * residual * residual + fitted.beta * variance
+            )
+        out.append(one)
+    return out
+
+
+def test_the_compounded_total_is_the_product_of_its_own_steps() -> None:
+    """The accumulation checked against the long way round, path by path.
+
+    Same seed, same residual draws, the growth factor multiplied out here rather
+    than in the module. The quantile of the two sets of paths has to agree
+    exactly, because they are the same numbers.
+    """
+    data = garch_path()
+    fitted = fit_garch(data)
+    result = horizon_risk(fitted, data, steps=10, paths=MIN_PATHS, seed=11)
+    by_hand = historical_risk(
+        _compounded_by_hand(fitted, data, steps=10, paths=MIN_PATHS, seed=11),
+        confidence=CONFIDENCE,
+    )
+    assert result.value_at_risk == by_hand.value_at_risk
+    assert result.expected_shortfall == by_hand.expected_shortfall
+
+
+def test_the_analytic_check_can_tell_the_two_accumulations_apart() -> None:
+    """The accumulation guard, shown to be able to fail.
+
+    ``test_the_simulated_volatility_matches_the_analytic_aggregation`` is the
+    check that the paths are accumulated correctly, and at its horizons it cannot
+    see the convention: at twenty-five steps the compounded volatility is within
+    0.2% of the analytic figure and the bound there is 2%, so pointing that test
+    at the compounded accumulation would have left it passing. The separation
+    arrives with the horizon. At five hundred steps the summed volatility is
+    within 1.5% of the analytic prediction over three seeds while the compounded
+    one runs 4 to 6% under it, because the variance of a product is not the sum
+    of the variances and the difference compounds like everything else here.
+    """
+    data = garch_path()
+    fitted = fit_garch(data)
+    for seed in (0, 1):
+        result = horizon_risk(
+            fitted,
+            data,
+            steps=500,
+            paths=8_000,
+            innovations=Innovations.PARAMETRIC,
+            seed=seed,
+        )
+        assert result.additive_volatility == pytest.approx(result.analytic_volatility, rel=0.015)
+        assert result.simulated_volatility < 0.97 * result.analytic_volatility
+
+
+def test_the_accumulation_agrees_with_the_one_the_series_module_already_had() -> None:
+    """The reference is another module of this library, which had it right.
+
+    ``ReturnSeries.cumulative`` compounds under the simple convention and takes
+    ``expm1`` of the sum under the log one. It has done since the series module
+    was written, three modules away from the horizon simulation, which
+    reimplemented the arithmetic and reimplemented it as a sum. So the check
+    here is not against a formula written for the occasion: it is against the
+    answer the library gives when asked the same question somewhere else, and
+    the two agree bit for bit under both conventions.
+    """
+    data = garch_path()
+    fitted = fit_garch(data)
+    drawn = _paths_by_hand(fitted, data, steps=10, paths=MIN_PATHS, seed=21)
+    through_series = [
+        ReturnSeries("path", tuple(one), Convention.SIMPLE).cumulative() for one in drawn
+    ]
+    result = horizon_risk(fitted, data, steps=10, paths=MIN_PATHS, seed=21)
+    assert result.value_at_risk == historical_risk(
+        through_series, confidence=CONFIDENCE
+    ).value_at_risk
+
+    logged = fit_garch(ReturnSeries("fund", tuple(data), Convention.LOG))
+    under_log = horizon_risk(logged, data, steps=10, paths=MIN_PATHS, seed=21)
+    # The series module reports a *simple* cumulative return under either
+    # convention, so the comparison runs through expm1 — which is also the
+    # reason the horizon figure under the log convention is a log loss and not
+    # directly comparable to the one above.
+    # A running total, and deliberately not `sum` or `math.fsum`. The module
+    # keeps a running total, and from CPython 3.12 the built-in `sum` applies
+    # compensated summation to floats, so it agrees with `math.fsum` rather than
+    # with a loop: writing `sum(one)` here passes on 3.10 and 3.11 and fails on
+    # 3.12 and 3.13, one unit in the last place out on 587 of these 1,000 paths.
+    # The exact summation is the better arithmetic — it is 2e-17 away, against a
+    # Monte Carlo standard error of 4e-3 — which makes it a reason not to claim
+    # bitwise agreement with it rather than a reason to change the accumulation.
+    assert under_log.value_at_risk == historical_risk(
+        [_running_sum(one) for one in drawn], confidence=CONFIDENCE
+    ).value_at_risk
+    assert under_log.value_at_risk != historical_risk(
+        [math.fsum(one) for one in drawn], confidence=CONFIDENCE
+    ).value_at_risk
+    assert -math.expm1(-under_log.value_at_risk) < result.value_at_risk
+
+
+def test_adding_simple_returns_overstates_the_loss_and_worse_with_the_horizon() -> None:
+    """The finding, and its direction.
+
+    Two periods of -10% compound to -19% and sum to -20%, so the sum is the more
+    severe of the two in the loss direction, at every horizon past the first. The
+    gap is not a rounding correction: on this series the summed figure is 2.5%
+    too large at ten steps and 15.8% too large at two hundred and fifty.
+    """
+    data = garch_path()
+    fitted = fit_garch(data)
+    factors = []
+    for steps in (5, 10, 60, 250):
+        result = horizon_risk(fitted, data, steps=steps, paths=16_000, seed=2)
+        assert result.convention is Convention.SIMPLE
+        assert result.value_at_risk < result.additive_risk.value_at_risk
+        factors.append(result.compounding_factor)
+    assert all(factor < 1.0 for factor in factors)
+    # Monotone in the horizon, which is what makes it a compounding effect
+    # rather than simulation noise.
+    assert factors == sorted(factors, reverse=True)
+    assert factors[1] == pytest.approx(0.9753, abs=0.004)
+    assert factors[-1] == pytest.approx(0.8635, abs=0.008)
+
+
+def test_one_step_agrees_to_rounding_rather_than_exactly() -> None:
+    """A single return is its own horizon return, and the two routes still differ.
+
+    The claim is about arithmetic: at one step the compounded accumulation is
+    ``(1 + r) - 1``, which is ``r`` as a real number and is not ``r`` as a float.
+    So the two routes are separate computations even here — the mechanism is
+    below, on a plain float, where it is deterministic — and what the simulation
+    can be held to is a bound of a few units in the last place rather than
+    equality, which would be an assertion about a binary representation.
+    """
+    # The mechanism, with no simulation in it.
+    assert (1.0 + 0.0123456789) - 1.0 != 0.0123456789
+    data = garch_path()
+    fitted = fit_garch(data)
+    result = horizon_risk(fitted, data, steps=1, paths=16_000, seed=4)
+    # Two calls under the simple convention, so two objects, however close the
+    # numbers come out.
+    assert result.risk is not result.additive_risk
+    assert abs(result.compounding_factor - 1.0) < 32.0 * sys.float_info.epsilon
+
+
+def test_under_log_returns_the_two_accumulations_are_one_object() -> None:
+    """Where the exactness is real, and why.
+
+    Adding log returns *is* the accumulation, so there is one list of totals and
+    one call to ``historical_risk``. The ratio is exactly one because it is a
+    number divided by itself, not because two routes happened to agree.
+    """
+    data = garch_path()
+    fitted = fit_garch(ReturnSeries("fund", tuple(data), Convention.LOG))
+    assert fitted.convention is Convention.LOG
+    result = horizon_risk(fitted, data, steps=10, paths=MIN_PATHS, seed=7)
+    assert result.convention is Convention.LOG
+    assert result.risk is result.additive_risk
+    assert result.compounding_factor == 1.0
+    assert result.simulated_volatility == result.additive_volatility
+    assert result.loss_against_square_root_of_time == (
+        result.quantile_against_square_root_of_time
+    )
+    # No sum of finite log returns can wipe a position out.
+    assert result.ruined_paths == 0
+
+
+def test_the_convention_argument_overrides_the_fitted_one() -> None:
+    """For the caller who knows better than the model does.
+
+    A model fitted on a bare sequence took the library default, and a caller who
+    knows those numbers were log returns can say so without refitting. The
+    override has to reach the accumulation, not just the reported field.
+    """
+    data = garch_path()
+    fitted = fit_garch(data)
+    assert fitted.convention is Convention.SIMPLE
+    default = horizon_risk(fitted, data, steps=10, paths=MIN_PATHS, seed=8)
+    overridden = horizon_risk(
+        fitted, data, steps=10, paths=MIN_PATHS, seed=8, convention=Convention.LOG
+    )
+    assert overridden.convention is Convention.LOG
+    assert overridden.risk is overridden.additive_risk
+    assert overridden.value_at_risk == default.additive_risk.value_at_risk
+    assert overridden.value_at_risk > default.value_at_risk
+
+
+def test_the_square_root_comparisons_are_statements_about_the_sum() -> None:
+    """Both ratios read off the additive accumulation, under either convention.
+
+    Scaling a one-period volatility by ``sqrt(h)`` is the variance of a sum of
+    ``h`` uncorrelated periods. Putting the compounded figure into that ratio
+    would mix the convention gap into a number whose job is reporting mean
+    reversion, so the two square-root properties stay additive and
+    ``loss_against_square_root_of_time`` is the one that moves.
+    """
+    data = garch_path()
+    simple = fit_garch(data)
+    logged = fit_garch(ReturnSeries("fund", tuple(data), Convention.LOG))
+    under_simple = horizon_risk(simple, data, steps=10, paths=16_000, seed=12)
+    under_log = horizon_risk(logged, data, steps=10, paths=16_000, seed=12)
+    assert under_simple.quantile_against_square_root_of_time == (
+        under_log.quantile_against_square_root_of_time
+    )
+    assert under_simple.scaling_against_square_root_of_time == (
+        under_log.scaling_against_square_root_of_time
+    )
+    # And the one that does move, moves by exactly the compounding factor.
+    assert under_simple.loss_against_square_root_of_time == pytest.approx(
+        under_simple.quantile_against_square_root_of_time * under_simple.compounding_factor,
+        rel=1e-12,
+        abs=0.0,
+    )
+    assert under_simple.loss_against_square_root_of_time < (
+        under_simple.quantile_against_square_root_of_time
+    )
+
+
+def test_the_quantile_does_not_survive_the_compounding_map() -> None:
+    """Why the summed figure cannot be repaired after the fact.
+
+    The obvious cheap fix is to read the summed total as a log return and
+    exponentiate the quantile. It does not work, because the map from a path's
+    sum to its product is not monotone: ``prod(1 + r) = exp(S - Q/2 + ...)``
+    where ``Q`` is the sum of the squared steps, so of two paths with the same
+    total the more jagged one compounds to the larger loss and the rank ordering
+    changes. Measured at ten steps on this fixture, the exponentiated summed
+    quantile lands 0.00061 short of the simulated compounded one — 32% of the
+    0.0019 error it was meant to remove, in the same direction.
+    """
+    data = garch_path()
+    fitted = fit_garch(data)
+    result = horizon_risk(fitted, data, steps=10, paths=16_000, seed=13)
+    summed = result.additive_risk.value_at_risk
+    shortcut = -(math.expm1(-summed))
+    assert shortcut < result.value_at_risk < summed
+    assert result.value_at_risk - shortcut == pytest.approx(0.00061, abs=0.0002)
+    # The repair is a third of the way short, so it is not a repair.
+    missed = (result.value_at_risk - shortcut) / (summed - result.value_at_risk)
+    assert 0.2 < missed < 0.5
+
+
+def test_a_wiped_out_path_floors_at_total_loss_rather_than_changing_sign() -> None:
+    """Ruin is a boundary, not a negative price.
+
+    At a volatility where a single period can lose more than everything, the
+    compounded value reaches zero and stays there: the horizon return is -1, and
+    a second bad step cannot take it to -1.4. ``ReturnSeries`` refuses a realised
+    simple return at or below -1 for the same reason. The summed total has no
+    such floor, which is the other half of the finding — it goes on reporting
+    losses of more than the position.
+    """
+    fitted = _ruinous_garch()
+    data = [0.0] * fitted.observations
+    result = horizon_risk(
+        fitted, data, steps=4, paths=MIN_PATHS, innovations=Innovations.PARAMETRIC, seed=1
+    )
+    assert result.ruined_paths > 0
+    assert result.risk.value_at_risk <= 1.0
+    assert result.expected_shortfall <= 1.0
+    # The floor is exactly one, not approximately.
+    assert result.expected_shortfall == pytest.approx(1.0, abs=1e-12)
+    # And the additive accumulation reports more than the position, as it must.
+    assert result.additive_risk.value_at_risk > 1.0
+
+
+def _ruinous_garch() -> Garch:
+    """A fitted record at a volatility high enough to wipe a position out."""
+    omega, alpha, beta = 0.25, 0.08, 0.90
+    return Garch(
+        omega=omega,
+        alpha=alpha,
+        beta=beta,
+        mean=0.0,
+        variances=(omega / (1.0 - alpha - beta),) * 400,
+        log_likelihood=0.0,
+        observations=400,
+        iterations=1,
+        converged=True,
+        variance_targeted=False,
+    )
+
+
+# -- the README table, read back ---------------------------------------------
+
+#: The rows of the compounding table on the front page: periods, the band the
+#: factor is published as, and the overstatement quoted beside it. Written out
+#: here rather than parsed from the document, so deleting a row cannot delete
+#: the check defending it.
+PUBLISHED: tuple[tuple[int, float, float, float, str], ...] = (
+    (5, 0.978, 0.976, 0.982, "2.2%"),
+    (10, 0.966, 0.963, 0.970, "3.5%"),
+    (60, 0.909, 0.906, 0.912, "10.0%"),
+    (250, 0.829, 0.826, 0.834, "20.6%"),
+)
+
+
+def test_the_published_compounding_table_still_holds() -> None:
+    """The front-page table, against the library, on the bundled series.
+
+    Three directions, because one of them alone drifts. The measured factor has
+    to sit inside the band the README publishes; the band and the overstatement
+    beside it have to agree with each other to the digit quoted; and the whole
+    rendered row has to appear in the document, so that editing the table
+    without editing the code fails here.
+
+    The band is five seeds wide and this runs one of them, which is the claim
+    the document makes — not that every seed agrees to four digits, which would
+    be false.
+    """
+    path = Path(__file__).resolve().parent.parent / "examples" / "returns.csv"
+    with path.open() as handle:
+        values = [float(row["equity"]) for row in csv.DictReader(handle)]
+    fitted = fit_garch(values)
+    document = (Path(__file__).resolve().parent.parent / "README.md").read_text()
+
+    for periods, central, low, high, overstatement in PUBLISHED:
+        result = horizon_risk(fitted, values, steps=periods, paths=16_000, seed=0)
+        factor = result.compounding_factor
+        assert low <= factor <= high, (periods, factor)
+        assert low <= central <= high, periods
+        # The two columns are one quantity written twice, so they have to agree.
+        quoted = float(overstatement.rstrip("%")) / 100.0
+        assert 1.0 / central - 1.0 == pytest.approx(quoted, abs=0.002), periods
+        dash = "\u2013"
+        row = (
+            f"| {periods} | {central:.3f}, within {low:.3f}{dash}{high:.3f} "
+            f"| {overstatement} |"
+        )
+        assert row in document, row
+    # And the table is the whole table. Checking the header appears once would
+    # not notice a row added below it, so the rows themselves are counted: four
+    # entries above plus the trivial one-period row, and nothing else.
+    header = "| periods | compounded ÷ summed |"
+    assert document.count(header) == 1
+    block = document.split(header, 1)[1].split("\n\n", 1)[0]
+    body = [line for line in block.splitlines() if line.startswith("| ")]
+    assert len(body) == len(PUBLISHED) + 1, body
+    assert body[0].startswith("| 1 | 1.000 |")

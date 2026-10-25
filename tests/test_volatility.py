@@ -21,7 +21,7 @@ from shortfall.backtest import validate
 from shortfall.distributions import normal_ppf, student_t_ppf
 from shortfall.historical import ewma_volatility
 from shortfall.parametric import normal_risk, student_t_risk
-from shortfall.series import ReturnSeries, TooShort
+from shortfall.series import Convention, ReturnSeries, TooShort
 from shortfall.volatility import (
     IDENTIFIED_DEGREES,
     MAX_DEGREES,
@@ -897,3 +897,31 @@ def test_fat_innovations_do_not_widen_a_forecast_that_was_already_right() -> Non
     assert 16.0 < normal_breaches / samples < 24.0
     assert 16.0 < student_breaches / samples < 24.0
     assert abs(student_breaches - normal_breaches) / samples < 2.0
+
+
+def test_the_fit_carries_the_convention_and_nothing_else_about_it() -> None:
+    """The convention reaches the record; the parameters do not depend on it.
+
+    The same numbers fitted twice, labelled simple once and log once, give the
+    same likelihood and the same three parameters, because the recursion is
+    additive in the residual either way. What differs is only the label — which
+    is the point: the information is free to carry and the horizon simulation
+    cannot work without it. Before this it was read off a ``ReturnSeries`` and
+    thrown away.
+    """
+    data = simulate_garch(600, seed=77)
+    bare = fit_garch(data)
+    simple = fit_garch(ReturnSeries("fund", tuple(data), Convention.SIMPLE))
+    logged = fit_garch(ReturnSeries("fund", tuple(data), Convention.LOG))
+    # A bare sequence takes the library default rather than refusing.
+    assert bare.convention is Convention.SIMPLE
+    assert simple.convention is Convention.SIMPLE
+    assert logged.convention is Convention.LOG
+    for other in (simple, logged):
+        assert (other.omega, other.alpha, other.beta) == (bare.omega, bare.alpha, bare.beta)
+        assert other.log_likelihood == bare.log_likelihood
+        assert other.variances == bare.variances
+    # One period's risk is one period's risk, so that is untouched too.
+    assert logged.risk(last_return=data[-1]).value_at_risk == (
+        bare.risk(last_return=data[-1]).value_at_risk
+    )

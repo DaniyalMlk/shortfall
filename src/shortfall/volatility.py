@@ -40,7 +40,7 @@ from typing import Final
 
 from .distributions import chi_square_sf, standardised_t_log_pdf
 from .parametric import Risk, normal_risk, student_t_risk
-from .series import ReturnSeries, TooShort
+from .series import Convention, ReturnSeries, TooShort
 
 
 class Innovation(str, Enum):
@@ -126,6 +126,14 @@ class Garch:
     innovation: Innovation = Innovation.NORMAL
     #: Estimated degrees of freedom, or ``None`` under normal innovations.
     degrees_of_freedom: float | None = field(default=None)
+    #: The convention the fitted series was computed under, carried so that
+    #: anything accumulating the model's returns over more than one period knows
+    #: which accumulation is the right one. It makes no difference to the fit —
+    #: the recursion is additive in the residual either way, and one period's
+    #: risk is one period's risk — and all the difference to a horizon, where
+    #: adding log returns is the horizon return and adding simple ones is not.
+    #: See :func:`~shortfall.horizon.horizon_risk`.
+    convention: Convention = Convention.SIMPLE
 
     @property
     def degrees_identified(self) -> bool:
@@ -553,12 +561,28 @@ def fit_garch(
     from the search and puts the long-run level where the data plainly says it
     is.
 
+    Passing a :class:`~shortfall.series.ReturnSeries` rather than a bare
+    sequence carries the return convention into the fit, where
+    :func:`~shortfall.horizon.horizon_risk` needs it: over more than one period
+    the accumulation of log returns and the accumulation of simple ones are
+    different arithmetic, and the model is the only thing in a position to say
+    which it was fitted on. The parameters themselves do not depend on it.
+
     ``strict`` raises when the optimiser runs out of iterations. Setting it
     false returns the best point found with :attr:`Garch.converged` false,
     which is for a caller fitting many series and wanting to see which failed
     rather than losing the batch.
     """
-    values = list(returns.values) if isinstance(returns, ReturnSeries) else list(returns)
+    # A bare sequence carries no convention, so it gets the library's default,
+    # which is the one `ReturnSeries` itself defaults to. Guessing from the data
+    # is not available: simple and log returns of the same prices differ in the
+    # third decimal on daily data and are indistinguishable at a glance.
+    if isinstance(returns, ReturnSeries):
+        values = list(returns.values)
+        convention = returns.convention
+    else:
+        values = list(returns)
+        convention = Convention.SIMPLE
     count = len(values)
     if count < MIN_OBSERVATIONS:
         raise TooShort(
@@ -636,6 +660,7 @@ def fit_garch(
         variance_targeted=variance_targeting,
         innovation=innovation,
         degrees_of_freedom=degrees,
+        convention=convention,
     )
 
 

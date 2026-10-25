@@ -48,7 +48,7 @@ from enum import Enum
 from typing import Final
 
 from .historical import HistoricalRisk, QuantileMethod, historical_risk
-from .series import TooShort
+from .series import Convention, TooShort
 from .volatility import Garch, Innovation
 
 #: Fewest paths a simulation will run. At a hundred paths the 99% quantile is the
@@ -95,17 +95,38 @@ class HorizonRisk:
     """A simulated horizon risk estimate, and how much to trust it."""
 
     #: The estimate itself, taken from the simulated horizon returns exactly as
-    #: it would be from realised ones.
+    #: it would be from realised ones — and in the convention the model was
+    #: fitted on, which is the one :attr:`convention` names.
     risk: HistoricalRisk
+    #: The same estimate taken from the *sum* of the simulated per-period
+    #: returns instead of their accumulation. Under
+    #: :attr:`~shortfall.series.Convention.LOG` the sum is the accumulation and
+    #: this is :attr:`risk` itself, the same object. Under
+    #: :attr:`~shortfall.series.Convention.SIMPLE` it is the figure the
+    #: arithmetic shortcut would have produced, kept for two reasons: it is what
+    #: :attr:`analytic_volatility` predicts, so the accumulation check survives
+    #: under either convention, and the gap between the two is the size of the
+    #: convention error rather than something a caller has to take on faith.
+    additive_risk: HistoricalRisk
+    #: Which accumulation :attr:`risk` was formed under, inherited from the
+    #: fitted model.
+    convention: Convention
     steps: int
     paths: int
     innovations: Innovations
-    #: Standard deviation of the simulated horizon returns.
+    #: Standard deviation of the simulated horizon returns, as accumulated.
     simulated_volatility: float
+    #: Standard deviation of the summed per-period returns. This is the one
+    #: :attr:`analytic_volatility` is a prediction of.
+    additive_volatility: float
     #: ``sqrt`` of the analytic horizon variance, which the simulation should
-    #: reproduce. The two agreeing is evidence the paths are being accumulated
-    #: correctly; it says nothing about the quantile, which is the point of
-    #: simulating.
+    #: reproduce. Agreement with :attr:`additive_volatility` is evidence the
+    #: paths are being accumulated correctly; it says nothing about the
+    #: quantile, which is the point of simulating. It is a statement about the
+    #: sum and not about the compounded return: the variance of a product is not
+    #: the sum of the variances, so under
+    #: :attr:`~shortfall.series.Convention.SIMPLE` there is no closed form here
+    #: to check :attr:`simulated_volatility` against.
     analytic_volatility: float
     #: What scaling the one-step volatility by ``sqrt(steps)`` would give.
     square_root_of_time_volatility: float
@@ -128,6 +149,15 @@ class HorizonRisk:
     #: worst path. The error bar means what it says once ``paths`` times the tail
     #: probability is a couple of hundred.
     standard_error: float
+    #: Paths whose compounded value reached zero. A simple return at or below
+    #: -1 is ruin rather than a negative price, so the horizon return of such a
+    #: path is exactly -1 and stays there; :class:`~shortfall.series.ReturnSeries`
+    #: refuses such a value in realised data for the same reason. Always zero
+    #: under :attr:`~shortfall.series.Convention.LOG`, where no sum of finite
+    #: log returns can wipe a position out, and zero on anything resembling
+    #: daily data. Non-zero means the quantile is sitting on a boundary and
+    #: :attr:`expected_shortfall` is bounded below by -1 rather than estimated.
+    ruined_paths: int
 
     @property
     def value_at_risk(self) -> float:
@@ -153,12 +183,77 @@ class HorizonRisk:
         Below one when today is more volatile than the long run and above one
         when it is calmer, for the same reason as the analytic version — this is
         the same quantity measured through the paths.
+
+        Measured on the *summed* returns, because square-root-of-time is a
+        statement about a sum: scaling a one-period volatility by ``sqrt(h)``
+        is the variance of an accumulation of ``h`` uncorrelated periods, which
+        is arithmetic that only the additive accumulation does. Mixing the
+        compounded volatility into this ratio would put the convention gap into
+        a number whose whole job is reporting mean reversion.
         """
-        return self.simulated_volatility / self.square_root_of_time_volatility
+        return self.additive_volatility / self.square_root_of_time_volatility
+
+    @property
+    def compounding_factor(self) -> float:
+        """Reported value at risk over the summed one.
+
+        The size of the convention error, as a multiplier. Exactly ``1.0`` under
+        :attr:`~shortfall.series.Convention.LOG`, where the two figures are the
+        same object rather than two numbers that happen to agree. Under
+        :attr:`~shortfall.series.Convention.SIMPLE` it is below one at every
+        horizon past the first, because compounding is gentler than addition in
+        the loss direction — two periods of -10% compound to -19% and sum to
+        -20% — and it falls away with the horizon. Measured on the bundled
+        equity series at 99%, over five seeds of 16,000 paths: 0.978 at five
+        steps, 0.966 at ten, 0.909 at sixty, 0.829 at two hundred and fifty,
+        each within 0.005 across the seeds. Read the other way, adding simple
+        returns overstates the loss by 2.2%, 3.5%, 10.0% and 20.6%.
+
+        **At one step it is one to within rounding, and not exactly one.** A
+        single return is its own horizon return under either convention, so the
+        two quantities are the same real number — but the compounded route
+        computes ``(1 + r) - 1``, which loses the low bits of ``r``. The gap came
+        to -1.6e-15 on the bundled series and is bounded by a few units in the
+        last place of the quantile; it is rounding, not a model difference. The
+        exactness that *is* available is the log one above, where there is a
+        single list and a single call.
+
+        That one-step agreement is also why every closed-form test in this
+        module's suite passed before the convention was carried at all: all of
+        them are at one step, where the bug cannot appear.
+        """
+        additive = self.additive_risk.value_at_risk
+        return self.risk.value_at_risk / additive if additive else math.inf
+
+    @property
+    def loss_against_square_root_of_time(self) -> float:
+        """Reported value at risk over the scaled one-step figure.
+
+        What the caller's own loss is against the rule, which under
+        :attr:`~shortfall.series.Convention.SIMPLE` is
+        :attr:`quantile_against_square_root_of_time` times
+        :attr:`compounding_factor` and under
+        :attr:`~shortfall.series.Convention.LOG` is the same number. The two
+        effects can point the same way or against each other, and on the bundled
+        equity series they very nearly cancel: at ten steps the variance path
+        puts the summed ratio at 1.038 and compounding multiplies it by 0.966,
+        leaving almost exactly one. The rule looks right there for two reasons
+        that are each wrong by about the same amount. At two hundred and fifty
+        steps the cancellation is gone — about 1.03 times 0.83 — and the
+        compounding half is the larger of the two.
+        """
+        scaled = math.sqrt(self.steps) * self.one_step_value_at_risk
+        return self.risk.value_at_risk / scaled if scaled else math.inf
 
     @property
     def quantile_against_square_root_of_time(self) -> float:
-        """Simulated value at risk over ``sqrt(steps)`` times the one-step figure.
+        """Summed value at risk over ``sqrt(steps)`` times the one-step figure.
+
+        Taken from the sum, for the reason given on
+        :attr:`scaling_against_square_root_of_time`: the rule is a statement
+        about an accumulation of uncorrelated periods, and this is the ratio that
+        isolates what the variance path does to it from what the convention
+        does. :attr:`loss_against_square_root_of_time` is the other one.
 
         The number worth looking at, and it does not agree with
         :attr:`scaling_against_square_root_of_time` — which is the finding.
@@ -185,7 +280,13 @@ class HorizonRisk:
         variance path is exactly what it does.
         """
         scaled = math.sqrt(self.steps) * self.one_step_value_at_risk
-        return self.value_at_risk / scaled if scaled else math.inf
+        return self.additive_risk.value_at_risk / scaled if scaled else math.inf
+
+
+def _sample_variance(values: Sequence[float]) -> float:
+    """Unbiased sample variance, summed with ``fsum``."""
+    average = math.fsum(values) / len(values)
+    return math.fsum((value - average) ** 2 for value in values) / (len(values) - 1)
 
 
 def _standardised_t_draw(rng: random.Random, degrees: float) -> float:
@@ -215,6 +316,7 @@ def horizon_risk(
     innovations: Innovations = Innovations.BOOTSTRAP,
     method: QuantileMethod = QuantileMethod.LINEAR,
     seed: int | None = 0,
+    convention: Convention | None = None,
 ) -> HorizonRisk:
     """Value at risk and expected shortfall over ``steps`` periods, by simulation.
 
@@ -224,6 +326,21 @@ def horizon_risk(
     standardised residuals, which need all of them. Passing a different series
     raises rather than silently standardising by variances belonging to other
     dates.
+
+    ``convention`` says how a path is accumulated, and defaults to the one
+    ``fitted`` carries — which is the convention of the series it was fitted on,
+    so the ordinary call needs nothing here. It is the question this function
+    cannot answer on its own and must not guess at, because the two answers are
+    different arithmetic on the same draws: under
+    :attr:`~shortfall.series.Convention.LOG` the horizon return is the sum of
+    the per-period returns, and under
+    :attr:`~shortfall.series.Convention.SIMPLE` it is ``prod(1 + r) - 1``.
+    Adding simple returns overstates a loss, by 3.5% at ten periods and 20.6% at
+    two hundred and fifty on the bundled equity series, and the error does not
+    show up at one period, where a return is its own horizon return either way.
+
+    Both are returned regardless — see :attr:`HorizonRisk.additive_risk` — so
+    the gap is a number in the result rather than a caveat in the prose.
 
     ``seed`` defaults to a fixed value so that two identical calls agree. Pass
     ``None`` for a fresh stream, which is what an outer loop measuring this
@@ -272,16 +389,21 @@ def horizon_risk(
     elif fitted.innovation is Innovation.STUDENT_T and degrees is None:  # pragma: no cover
         raise ValueError("a Student-t fit carries degrees of freedom; this one does not")
 
+    chosen = fitted.convention if convention is None else convention
     start = fitted.next_variance(returns[-1])
     omega, alpha, beta, mean = fitted.omega, fitted.alpha, fitted.beta, fitted.mean
     parametric_t = innovations is Innovations.PARAMETRIC and (
         fitted.innovation is Innovation.STUDENT_T and degrees is not None
     )
 
+    compounding = chosen is Convention.SIMPLE
     totals: list[float] = []
+    accumulated: list[float] = []
+    ruined = 0
     for _ in range(paths):
         variance = start
         total = 0.0
+        growth = 1.0
         for _step in range(steps):
             if residuals:
                 draw = residuals[rng.randrange(len(residuals))]
@@ -291,21 +413,47 @@ def horizon_risk(
             else:
                 draw = rng.gauss(0.0, 1.0)
             residual = math.sqrt(variance) * draw
-            total += mean + residual
+            step_return = mean + residual
+            total += step_return
+            if compounding and growth > 0.0:
+                # A simple return at or below -1 is ruin, not a negative price.
+                # `ReturnSeries` refuses such a value in realised data; here the
+                # path is wiped out and stays wiped out, and the horizon return
+                # floors at -1 rather than changing sign. The variance recursion
+                # carries on regardless, because the summed total is still a
+                # well-defined quantity and is what the analytic variance is a
+                # prediction of.
+                growth *= 1.0 + step_return
+                if growth <= 0.0:
+                    growth = 0.0
+                    ruined += 1
             variance = omega + alpha * residual * residual + beta * variance
         totals.append(total)
+        if compounding:
+            accumulated.append(growth - 1.0)
 
-    risk = historical_risk(totals, confidence=confidence, method=method)
-    average = math.fsum(totals) / paths
-    variance_of_totals = math.fsum((value - average) ** 2 for value in totals) / (paths - 1)
+    additive_risk = historical_risk(totals, confidence=confidence, method=method)
+    # Under the log convention the sum *is* the accumulation, so the two risks
+    # are one object rather than two numbers that agree to some tolerance, and
+    # `compounding_factor` is exactly one for that reason.
+    risk = (
+        historical_risk(accumulated, confidence=confidence, method=method)
+        if compounding
+        else additive_risk
+    )
+    reported = accumulated if compounding else totals
+    variance_of_totals = _sample_variance(totals)
+    variance_of_reported = _sample_variance(reported) if compounding else variance_of_totals
 
     # Batched, so the error bar needs no density estimate at the quantile. Each
     # batch is a contiguous slice of an independent stream, so the batches are
-    # independent by construction rather than by assumption.
+    # independent by construction rather than by assumption. Batched on the
+    # reported accumulation, because the error bar belongs to the figure
+    # reported.
     per_batch = paths // BATCHES
     batch_estimates = [
         historical_risk(
-            totals[index * per_batch : (index + 1) * per_batch],
+            reported[index * per_batch : (index + 1) * per_batch],
             confidence=confidence,
             method=method,
         ).value_at_risk
@@ -323,13 +471,17 @@ def horizon_risk(
             confidence=confidence, last_return=returns[-1]
         ).value_at_risk,
         risk=risk,
+        additive_risk=additive_risk,
+        convention=chosen,
         steps=steps,
         paths=paths,
         innovations=innovations,
-        simulated_volatility=math.sqrt(variance_of_totals),
+        simulated_volatility=math.sqrt(variance_of_reported),
+        additive_volatility=math.sqrt(variance_of_totals),
         analytic_volatility=math.sqrt(fitted.horizon_variance(steps, last_return=returns[-1])),
         square_root_of_time_volatility=one_step * math.sqrt(steps),
         standard_error=standard_error,
+        ruined_paths=ruined,
     )
 
 
