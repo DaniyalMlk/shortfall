@@ -91,7 +91,7 @@ from .saddlepoint import (
     tail_probability,
 )
 from .scoring import compare, fz0_loss, quantile_loss
-from .series import Panel
+from .series import Convention, Panel
 from .spectral import (
     ExponentialSpectrum,
     PowerSpectrum,
@@ -937,6 +937,7 @@ def command_volatility(arguments: argparse.Namespace, stream: TextIO) -> dict[st
             paths=int(arguments.paths),
             innovations=Innovations(arguments.draw),
             seed=arguments.seed,
+            convention=Convention(arguments.convention),
         )
         payload["horizonRisk"] = {
             "paths": simulated.paths,
@@ -948,8 +949,15 @@ def command_volatility(arguments: argparse.Namespace, stream: TextIO) -> dict[st
             "relativeStandardError": simulated.relative_standard_error,
             "simulatedVolatility": simulated.simulated_volatility,
             "analyticVolatility": simulated.analytic_volatility,
+            "additiveVolatility": simulated.additive_volatility,
             "volatilityAgainstSquareRootOfTime": (simulated.scaling_against_square_root_of_time),
             "quantileAgainstSquareRootOfTime": (simulated.quantile_against_square_root_of_time),
+            "convention": simulated.convention.value,
+            "additiveValueAtRisk": simulated.additive_risk.value_at_risk,
+            "additiveExpectedShortfall": simulated.additive_risk.expected_shortfall,
+            "compoundingFactor": simulated.compounding_factor,
+            "lossAgainstSquareRootOfTime": simulated.loss_against_square_root_of_time,
+            "ruinedPaths": simulated.ruined_paths,
         }
     if verdict is not None:
         payload["fatTail"] = {
@@ -1025,6 +1033,7 @@ def command_volatility(arguments: argparse.Namespace, stream: TextIO) -> dict[st
             paths=int(arguments.paths),
             innovations=Innovations(arguments.draw),
             seed=arguments.seed,
+            convention=Convention(arguments.convention),
         )
         print(
             f"\nHorizon risk over {horizon} periods, from "
@@ -1040,7 +1049,7 @@ def command_volatility(arguments: argparse.Namespace, stream: TextIO) -> dict[st
                 ],
                 ["expected shortfall", percent(simulated.expected_shortfall)],
                 ["simulated volatility", percent(simulated.simulated_volatility)],
-                ["analytic volatility", percent(simulated.analytic_volatility)],
+                ["analytic volatility (of the sum)", percent(simulated.analytic_volatility)],
                 [
                     "volatility vs square-root-of-time",
                     f"{simulated.scaling_against_square_root_of_time:.4f}",
@@ -1048,6 +1057,15 @@ def command_volatility(arguments: argparse.Namespace, stream: TextIO) -> dict[st
                 [
                     "quantile vs square-root-of-time",
                     f"{simulated.quantile_against_square_root_of_time:.4f}",
+                ],
+                [
+                    "value at risk if the periods were added",
+                    percent(simulated.additive_risk.value_at_risk),
+                ],
+                ["compounding factor", f"{simulated.compounding_factor:.4f}"],
+                [
+                    "loss vs square-root-of-time",
+                    f"{simulated.loss_against_square_root_of_time:.4f}",
                 ],
             ],
             stream,
@@ -1069,6 +1087,26 @@ def command_volatility(arguments: argparse.Namespace, stream: TextIO) -> dict[st
             "on four of ten. So the direction is dependable in one case and not "
             "in the other, and no multiplier on a scaled volatility is even "
             "consistently wrong.",
+            file=stream,
+        )
+        print(
+            f"\nBoth of those ratios are statements about the sum of the "
+            f"periods, because that is what scaling by the square root of "
+            f"{horizon} is arithmetic about. The loss row is the one in the "
+            f"convention the returns were read under: these were taken as "
+            f"{arguments.convention} returns, so the horizon return is "
+            + (
+                "their product, and the summed figure above it is what adding "
+                "them would have given — larger, because compounding is "
+                "gentler than addition in the loss direction. Pass "
+                "--convention log if the file holds log returns, which makes "
+                "the two the same number."
+                if simulated.convention is Convention.SIMPLE
+                else "their sum, which makes the two figures the same number "
+                "and the compounding factor exactly one. Note that a log loss "
+                "is not a loss of the position: a horizon log return of -0.20 "
+                "is -18.1% of it."
+            ),
             file=stream,
         )
 
@@ -2811,6 +2849,17 @@ def build_parser() -> argparse.ArgumentParser:
         "The horizon quantile is not analytic — the sum of the innovations is "
         "not a member of the family they came from — so this is the only honest "
         "route to a multi-period figure.",
+    )
+    moving.add_argument(
+        "--convention",
+        choices=["simple", "log"],
+        default="simple",
+        help="whether the returns in the file are simple or log returns. It "
+        "changes nothing about the fit and everything about a horizon longer "
+        "than one period: the horizon return of a log series is the sum of its "
+        "periods and the horizon return of a simple series is their product, "
+        "and adding simple returns overstates a loss. Defaults to simple, "
+        "which is this library's default everywhere.",
     )
     moving.add_argument(
         "--draw",

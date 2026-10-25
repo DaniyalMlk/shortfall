@@ -2157,3 +2157,73 @@ def test_the_per_cent_signs_survive_the_escaping(
         printed = capsys.readouterr().out
         collapsed = " ".join(printed.split())
         assert wanted in collapsed, (subcommand, wanted)
+
+
+def test_the_horizon_convention_is_a_command_line_choice(tmp_path: Path) -> None:
+    """The file says nothing about its convention, so the caller has to.
+
+    A CSV of returns carries no convention, and over a horizon the two give
+    different numbers from the same column. The default is simple, matching the
+    library, and ``--convention log`` makes the summed and compounded figures
+    one number.
+    """
+    path = garch_file(tmp_path / "v.csv")
+    code, output = run(
+        "--json", "volatility", str(path), "--horizon", "60", "--paths", "2000"
+    )
+    assert code == 0
+    simple = json.loads(output)["horizonRisk"]
+    code, output = run(
+        "--json",
+        "volatility",
+        str(path),
+        "--horizon",
+        "60",
+        "--paths",
+        "2000",
+        "--convention",
+        "log",
+    )
+    assert code == 0
+    logged = json.loads(output)["horizonRisk"]
+
+    assert simple["convention"] == "simple"
+    assert logged["convention"] == "log"
+    assert simple["compoundingFactor"] < 1.0
+    assert logged["compoundingFactor"] == 1.0
+    # Same draws either way, so the summed figure is identical and only the
+    # reported one moves.
+    assert simple["additiveValueAtRisk"] == logged["additiveValueAtRisk"]
+    assert logged["valueAtRisk"] == logged["additiveValueAtRisk"]
+    assert simple["valueAtRisk"] < simple["additiveValueAtRisk"]
+    assert simple["ruinedPaths"] == logged["ruinedPaths"] == 0
+    # The square-root ratios are additive statements, so they do not move.
+    assert (
+        simple["quantileAgainstSquareRootOfTime"]
+        == logged["quantileAgainstSquareRootOfTime"]
+    )
+    assert simple["lossAgainstSquareRootOfTime"] < logged["lossAgainstSquareRootOfTime"]
+
+
+def test_the_horizon_convention_is_named_in_the_text_output(tmp_path: Path) -> None:
+    """A reader of the table should not have to know which accumulation it is."""
+    path = garch_file(tmp_path / "v.csv")
+    code, output = run("volatility", str(path), "--horizon", "60", "--paths", "2000")
+    assert code == 0
+    assert "value at risk if the periods were added" in output
+    assert "compounding factor" in output
+    assert "taken as simple returns" in output
+    assert "--convention log" in output
+    code, logged = run(
+        "volatility", str(path), "--horizon", "60", "--paths", "2000", "--convention", "log"
+    )
+    assert code == 0
+    assert "taken as log returns" in logged
+    assert "compounding factor exactly one" in logged
+
+
+def test_a_convention_the_command_line_does_not_know_is_refused(tmp_path: Path) -> None:
+    path = garch_file(tmp_path / "v.csv")
+    with pytest.raises(SystemExit) as raised:
+        run("volatility", str(path), "--convention", "geometric")
+    assert raised.value.code == 2
