@@ -573,13 +573,16 @@ def fit_garch(
     which is for a caller fitting many series and wanting to see which failed
     rather than losing the batch.
     """
-    series = returns if isinstance(returns, ReturnSeries) else None
-    values = list(series.values) if series is not None else list(returns)
     # A bare sequence carries no convention, so it gets the library's default,
     # which is the one `ReturnSeries` itself defaults to. Guessing from the data
     # is not available: simple and log returns of the same prices differ in the
     # third decimal on daily data and are indistinguishable at a glance.
-    convention = series.convention if series is not None else Convention.SIMPLE
+    if isinstance(returns, ReturnSeries):
+        values = list(returns.values)
+        convention = returns.convention
+    else:
+        values = list(returns)
+        convention = Convention.SIMPLE
     count = len(values)
     if count < MIN_OBSERVATIONS:
         raise TooShort(

@@ -33,7 +33,7 @@ from shortfall.horizon import (
     horizon_risk,
 )
 from shortfall.parametric import normal_risk, student_t_risk
-from shortfall.series import TooShort
+from shortfall.series import Convention, TooShort
 from shortfall.volatility import Garch, Innovation, fit_garch
 
 TRUE = (2.0e-6, 0.08, 0.90)
@@ -142,6 +142,13 @@ def test_the_simulated_volatility_matches_the_analytic_aggregation(steps: int) -
     does. Averaged over six independent runs the ratio came to 1.0001; a single run
     of 20,000 paths carries about half a percent of noise in an estimate of a
     standard deviation, so the bound here is 2%.
+
+    Against the *additive* volatility, which is what the analytic aggregation is a
+    statement about. The variance of a product is not the sum of the variances, so
+    under the simple convention there is no closed form for the compounded
+    accumulation to be checked against — and the check that does exist would
+    quietly loosen into a check on the compounding gap if it were pointed at the
+    compounded figure.
     """
     data = garch_path()
     fitted = fit_garch(data)
@@ -155,7 +162,7 @@ def test_the_simulated_volatility_matches_the_analytic_aggregation(steps: int) -
             innovations=Innovations.PARAMETRIC,
             seed=seed,
         )
-        ratios.append(result.simulated_volatility / result.analytic_volatility)
+        ratios.append(result.additive_volatility / result.analytic_volatility)
     assert statistics.fmean(ratios) == pytest.approx(1.0, abs=0.01)
     assert all(abs(ratio - 1.0) < 0.02 for ratio in ratios)
 
@@ -368,19 +375,28 @@ def test_the_relative_error_is_reported_and_small_at_a_serious_path_count() -> N
 
 def test_the_error_is_infinite_rather_than_a_division_by_zero() -> None:
     """A value at risk of exactly zero is degenerate, not an occasion to crash."""
+    zero = _zero_risk()
     empty = HorizonRisk(
-        risk=_zero_risk(),
+        risk=zero,
+        additive_risk=zero,
+        convention=Convention.SIMPLE,
         steps=1,
         paths=MIN_PATHS,
         innovations=Innovations.PARAMETRIC,
         simulated_volatility=0.0,
+        additive_volatility=0.0,
         analytic_volatility=0.0,
         square_root_of_time_volatility=0.0,
         one_step_value_at_risk=0.0,
         standard_error=0.0,
+        ruined_paths=0,
     )
     assert empty.relative_standard_error == math.inf
     assert empty.quantile_against_square_root_of_time == math.inf
+    assert empty.loss_against_square_root_of_time == math.inf
+    # The convention gap is a ratio too, and a zero denominator there is the
+    # same degeneracy rather than a different one.
+    assert empty.compounding_factor == math.inf
 
 
 def _zero_risk() -> HistoricalRisk:
