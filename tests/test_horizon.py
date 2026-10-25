@@ -16,11 +16,13 @@ every innovation is normal, because the variance path is stochastic.
 
 from __future__ import annotations
 
+import csv
 import math
 import random
 import statistics
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 import pytest
 
@@ -179,7 +181,9 @@ def test_the_horizon_return_is_leptokurtic_even_under_normal_innovations() -> No
     variance path is stochastic: a large draw early raises the variance for every
     remaining step. Measured over ten runs of 40,000 paths, the ratio of value at
     risk to volatility goes from 2.334 at one step — the normal's 2.326, as it must
-    — to 2.480 at ten.
+    — to 2.480 at ten on the summed accumulation and 2.421 on the compounded one.
+    Compounding shaves the tail by more than it shaves the standard deviation, so
+    it takes a little of the leptokurtosis back out; it does not account for it.
 
     So the two square-root-of-time comparisons point in opposite directions on the
     same day: the horizon volatility came 0.8% below the scaled figure and the
@@ -196,8 +200,13 @@ def test_the_horizon_return_is_leptokurtic_even_under_normal_innovations() -> No
     )
     one_ratio = one.value_at_risk / one.simulated_volatility
     ten_ratio = ten.value_at_risk / ten.simulated_volatility
+    ten_additive = ten.additive_risk.value_at_risk / ten.additive_volatility
     assert one_ratio == pytest.approx(2.326, abs=0.04)
     assert ten_ratio > one_ratio + 0.08
+    assert ten_additive > ten_ratio
+    # Both accumulations, pinned, so neither figure can drift behind the other.
+    assert ten_ratio == pytest.approx(2.421, abs=0.03)
+    assert ten_additive == pytest.approx(2.480, abs=0.03)
     assert ten.scaling_against_square_root_of_time < 1.0
     assert ten.quantile_against_square_root_of_time > 1.02
     # The two comparisons disagree, which is the whole content of the test.
@@ -886,3 +895,61 @@ def _ruinous_garch() -> Garch:
         converged=True,
         variance_targeted=False,
     )
+
+
+# -- the README table, read back ---------------------------------------------
+
+#: The rows of the compounding table on the front page: periods, the band the
+#: factor is published as, and the overstatement quoted beside it. Written out
+#: here rather than parsed from the document, so deleting a row cannot delete
+#: the check defending it.
+PUBLISHED: tuple[tuple[int, float, float, float, str], ...] = (
+    (5, 0.978, 0.976, 0.982, "2.2%"),
+    (10, 0.966, 0.963, 0.970, "3.5%"),
+    (60, 0.909, 0.906, 0.912, "10.0%"),
+    (250, 0.829, 0.826, 0.834, "20.6%"),
+)
+
+
+def test_the_published_compounding_table_still_holds() -> None:
+    """The front-page table, against the library, on the bundled series.
+
+    Three directions, because one of them alone drifts. The measured factor has
+    to sit inside the band the README publishes; the band and the overstatement
+    beside it have to agree with each other to the digit quoted; and the whole
+    rendered row has to appear in the document, so that editing the table
+    without editing the code fails here.
+
+    The band is five seeds wide and this runs one of them, which is the claim
+    the document makes — not that every seed agrees to four digits, which would
+    be false.
+    """
+    path = Path(__file__).resolve().parent.parent / "examples" / "returns.csv"
+    with path.open() as handle:
+        values = [float(row["equity"]) for row in csv.DictReader(handle)]
+    fitted = fit_garch(values)
+    document = (Path(__file__).resolve().parent.parent / "README.md").read_text()
+
+    for periods, central, low, high, overstatement in PUBLISHED:
+        result = horizon_risk(fitted, values, steps=periods, paths=16_000, seed=0)
+        factor = result.compounding_factor
+        assert low <= factor <= high, (periods, factor)
+        assert low <= central <= high, periods
+        # The two columns are one quantity written twice, so they have to agree.
+        quoted = float(overstatement.rstrip("%")) / 100.0
+        assert 1.0 / central - 1.0 == pytest.approx(quoted, abs=0.002), periods
+        dash = "\u2013"
+        row = (
+            f"| {periods} | {central:.3f}, within {low:.3f}{dash}{high:.3f} "
+            f"| {overstatement} |"
+        )
+        assert row in document, row
+    # And the table is the whole table. Checking the header appears once would
+    # not notice a row added below it, so the rows themselves are counted: four
+    # entries above plus the trivial one-period row, and nothing else.
+    header = "| periods | compounded ÷ summed |"
+    assert document.count(header) == 1
+    block = document.split(header, 1)[1].split("\n\n", 1)[0]
+    body = [line for line in block.splitlines() if line.startswith("| ")]
+    assert len(body) == len(PUBLISHED) + 1, body
+    assert body[0].startswith("| 1 | 1.000 |")

@@ -1394,3 +1394,101 @@ Two components on the same points gives -50.44 with a smallest deviation of
 0.177 and is not flagged. Where the fit is identified it works — 20,000 draws
 recover a 99% expected shortfall within 1.1%, 200 draws within 7.1% — and the
 starts are sample quantiles, so the same data gives the same answer twice.
+
+## Phase 28 — The accumulation a horizon figure is made of
+
+- [x] `Garch` carries the convention of the series it was fitted on, taken from
+      a `ReturnSeries` and defaulting to simple for a bare sequence
+- [x] `horizon_risk` accumulates a path under that convention, with an argument
+      for the caller who knows better than the model does
+- [x] Both accumulations reported, so the analytic variance still has something
+      to check and the gap between them is a number rather than a caveat
+- [x] The two square-root-of-time ratios kept as statements about the sum, and
+      a third added for the loss in the file's own convention
+- [x] Ruin as a floor rather than a negative price, and ruined paths counted
+- [x] `--convention` on the `volatility` subcommand, with the accumulation named
+      in the table and in the JSON
+
+### What the phase is for
+
+The simulation added the per-period returns:
+
+```python
+total += mean + residual
+```
+
+That is the horizon return of a log series. The horizon return of a simple
+series is `prod(1 + r) - 1`, and the two are not the same number. Nothing in
+`horizon.py` mentioned the convention at all, and the convention was available
+right up to the point it was needed and then dropped: `fit_garch` takes a
+`ReturnSeries | Sequence[float]`, reads `.values` off it, and `Garch` had no
+field for it. So the natural call — build a series from prices under the
+library's default, which is simple, fit a GARCH, ask for a one-year figure —
+summed simple returns and reported the result as a loss.
+
+Adding simple returns overstates a loss, because compounding is gentler in that
+direction: two periods of -10% compound to -19% and sum to -20%. On the bundled
+equity series at 99%, over five seeds of 16,000 paths, the summed figure is too
+large by 2.2% at five periods, 3.5% at ten, 10.0% at sixty and 20.6% at two
+hundred and fifty. The ratio is two quantiles off the same paths, so it moves
+less across seeds than either does — within 0.005 at that path count — and it is
+published as a band rather than as four digits for that reason.
+
+Three things kept it still. One period hides it exactly — a return is its own
+horizon return under either convention — and every closed-form test in the suite
+is at one period. The accumulation check that exists, against the analytic
+horizon variance, could not see it either: at twenty-five periods the compounded
+volatility sits within 0.2% of the analytic figure against a 2% bound, so
+pointing that test at the wrong accumulation would have left it passing. The
+separation is 4 to 6% at five hundred periods, and that is now asserted
+alongside the original check. And the obvious repair does not work: reading the
+summed total as a log return and exponentiating the quantile closes about a
+third of the gap, because the map from a path's sum to its product is not
+monotone — of two paths with the same total the more jagged one compounds to the
+larger loss, so the ranks change.
+
+**The right accumulation was already here.** `ReturnSeries.cumulative` has
+compounded under the simple convention and taken `expm1` of the sum under the
+log one since the series module was written. The horizon simulation
+reimplemented the arithmetic three modules away and reimplemented the wrong one,
+which is the same shape as a fix that lands in one module and never reaches the
+others. The sweep for the rest of it came back clean, and the result is worth
+recording rather than assumed: `horizon_variance` and `horizon_mixture` are the
+only other things here that aggregate across periods, both are closed forms
+whose first line says they are statements about a sum, and `drawdown` converts
+explicitly and says why.
+
+### Where the square-root-of-time ratios live now
+
+Scaling a one-period volatility by `sqrt(h)` is arithmetic about a sum, so both
+existing ratios stay statements about the summed accumulation and
+`loss_against_square_root_of_time` carries the one in the caller's convention.
+The two effects very nearly cancel at ten periods on the bundled series — 1.038
+from the stochastic variance path times 0.9655 from compounding is 1.002 — which
+is the uncomfortable version of the finding: the rule looks right there for two
+reasons that are each wrong by about the same amount, and at two hundred and
+fifty periods the cancellation is gone and the product is 0.85.
+
+Compounding also takes a little of the leptokurtosis back out, because it shaves
+the tail by more than it shaves the standard deviation: the ratio of value at
+risk to volatility at ten periods is 2.480 summed and 2.421 compounded, against
+2.334 at one.
+
+### One step is one to within rounding, and not exactly
+
+The compounded route computes `(1 + r) - 1`, which is `r` as a real number and
+not `r` as a float, so at one period the two figures are a few units in the last
+place apart rather than equal — measured at 1.6e-15 relative on the bundled
+series and half a unit on the fixture. The exactness that is available is the
+log one, where there is a single list of totals and a single call, and the ratio
+is a number divided by itself.
+
+The constructed reference for the compounded accumulation has the same
+character. It re-runs the recursion in the test and multiplies the steps out,
+and it has to associate the arithmetic the same way — `1 + (mean + residual)`,
+not `(1 + mean) + residual` — or the two disagree in the last two bits. The
+additive comparison has to use an explicit running total for a sharper reason:
+from CPython 3.12 the built-in `sum` applies compensated summation to floats, so
+`sum(path)` agrees with `math.fsum` rather than with a loop. Writing `sum` there
+passes on 3.10 and 3.11 and fails on 3.12 and 3.13, one unit in the last place
+out on 587 of 1,000 paths.

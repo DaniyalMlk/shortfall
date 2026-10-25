@@ -204,10 +204,10 @@ class HorizonRisk:
         horizon past the first, because compounding is gentler than addition in
         the loss direction — two periods of -10% compound to -19% and sum to
         -20% — and it falls away with the horizon. Measured on the bundled
-        equity series at 99% over 16,000 paths: 0.9775 at five steps, 0.9655 at
-        ten, 0.9068 at sixty, 0.8261 at two hundred and fifty. Read the other
-        way, adding simple returns overstates the loss by 2.3%, 3.6%, 10.3% and
-        21.0%.
+        equity series at 99%, over five seeds of 16,000 paths: 0.978 at five
+        steps, 0.966 at ten, 0.909 at sixty, 0.829 at two hundred and fifty,
+        each within 0.005 across the seeds. Read the other way, adding simple
+        returns overstates the loss by 2.2%, 3.5%, 10.0% and 20.6%.
 
         **At one step it is one to within rounding, and not exactly one.** A
         single return is its own horizon return under either convention, so the
@@ -236,11 +236,11 @@ class HorizonRisk:
         :attr:`~shortfall.series.Convention.LOG` is the same number. The two
         effects can point the same way or against each other, and on the bundled
         equity series they very nearly cancel: at ten steps the variance path
-        puts the summed ratio at 1.038 and compounding multiplies it by 0.9655,
-        leaving 1.002. The rule looks right there for two reasons that are each
-        wrong by about the same amount. At two hundred and fifty steps the
-        cancellation is gone — 1.031 times 0.826 is 0.852 — and the compounding
-        half is the larger of the two.
+        puts the summed ratio at 1.038 and compounding multiplies it by 0.966,
+        leaving almost exactly one. The rule looks right there for two reasons
+        that are each wrong by about the same amount. At two hundred and fifty
+        steps the cancellation is gone — about 1.03 times 0.83 — and the
+        compounding half is the larger of the two.
         """
         scaled = math.sqrt(self.steps) * self.one_step_value_at_risk
         return self.risk.value_at_risk / scaled if scaled else math.inf
@@ -335,7 +335,7 @@ def horizon_risk(
     :attr:`~shortfall.series.Convention.LOG` the horizon return is the sum of
     the per-period returns, and under
     :attr:`~shortfall.series.Convention.SIMPLE` it is ``prod(1 + r) - 1``.
-    Adding simple returns overstates a loss, by 3.6% at ten periods and 21.0% at
+    Adding simple returns overstates a loss, by 3.5% at ten periods and 20.6% at
     two hundred and fifty on the bundled equity series, and the error does not
     show up at one period, where a return is its own horizon return either way.
 

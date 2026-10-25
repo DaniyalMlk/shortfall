@@ -192,6 +192,7 @@ shortfall validate      forecasts.csv --es-column es --replications 2000
 shortfall volatility    returns.csv --horizon 250 --column fund
 shortfall volatility    returns.csv --innovation student-t --confidence 0.995
 shortfall volatility    returns.csv --paths 40000 --horizon 10 --draw bootstrap
+shortfall volatility    returns.csv --paths 20000 --horizon 60 --convention log
 shortfall tail          returns.csv --confidence 0.999 --curve 12
 shortfall tail          returns.csv --threshold 0.02 --method probability_weighted_moments
 shortfall copula        returns.csv --weights 0.4,0.25,0.15,0.2 --paths 40000
@@ -723,12 +724,45 @@ variance mixture rather than a normal. What the model gives at a horizon is the
 ```python
 from shortfall import Innovations, fit_garch, horizon_risk
 
-fitted = fit_garch(returns)
+fitted = fit_garch(returns)         # a ReturnSeries carries its convention in
 ten_day = horizon_risk(fitted, returns, steps=10, paths=40_000)
 ten_day.value_at_risk            # with ten_day.standard_error beside it
+ten_day.compounding_factor       # what adding the periods would have cost
 ten_day.quantile_against_square_root_of_time
 horizon_risk(fitted, returns, steps=10, innovations=Innovations.PARAMETRIC)
 ```
+
+**A horizon return has a convention, and the simulation needs to be told
+which.** The horizon return of a log series is the sum of its periods; the
+horizon return of a simple series is their product. Adding simple returns
+overstates a loss, because compounding is gentler in that direction — two
+periods of -10% compound to -19% and sum to -20% — and the gap grows with the
+horizon. On the bundled equity series at 99%, over five seeds of 16,000 paths —
+a ratio of two quantiles off the same paths, so it is steadier than either, but
+still a simulated quantity and quoted as a band:
+
+| periods | compounded ÷ summed | the summed figure is too large by |
+|---|---|---|
+| 1 | 1.000 | nothing: a return is its own horizon return |
+| 5 | 0.978, within 0.976–0.982 | 2.2% |
+| 10 | 0.966, within 0.963–0.970 | 3.5% |
+| 60 | 0.909, within 0.906–0.912 | 10.0% |
+| 250 | 0.829, within 0.826–0.834 | 20.6% |
+
+So `Garch` carries the convention of the series it was fitted on and
+`horizon_risk` accumulates accordingly; both figures come back, because the
+summed one is what the analytic horizon variance predicts and the ratio between
+them is worth having as a number. The correct accumulation was already in this
+library, in `ReturnSeries.cumulative`, and the horizon simulation reimplemented
+it as a sum three modules away.
+
+Two things make this the sort of error that sits still. One period hides it
+completely, and *every* closed-form test here is at one period. And the obvious
+repair does not work: reading the summed total as a log return and
+exponentiating the quantile closes only about a third of the gap, because the
+map from a path's sum to its product is not monotone — of two paths with the
+same total, the more jagged one compounds to the larger loss, so the ranks
+change and the quantile does not carry through.
 
 Running the recursion forward gets three things the analytic route cannot. The
 **variance path is stochastic** rather than its own expectation, so a large draw
@@ -740,8 +774,15 @@ forecasts — the EWMA one in `historical.py` has no long-run level and so no
 forecast.
 
 **The two square-root-of-time comparisons disagree, and the sign is not a
-constant.** That is the whole argument for simulating. Over five samples at ten
-steps and 30,000 paths:
+constant.** That is the whole argument for simulating. Both ratios below are
+read off the *summed* accumulation, because scaling a one-period volatility by
+`sqrt(h)` is arithmetic about a sum — mixing the convention gap into them would
+put it in a number whose job is reporting mean reversion.
+`loss_against_square_root_of_time` is the one in the file's own convention, and
+at ten steps on this series it is 1.038 times 0.9655, or 1.002: the rule looks
+right there for two reasons that are each wrong by about the same amount. At two
+hundred and fifty steps the cancellation is gone and it is 0.852. Over five
+samples at ten steps and 30,000 paths:
 
 | innovations | quantile ÷ scaled one-step quantile | above one |
 |---|---|---|
@@ -751,7 +792,8 @@ steps and 30,000 paths:
 Two effects pull against each other. The stochastic variance path makes the total
 leptokurtic even when each innovation is normal, pushing the ratio above one — the
 ratio of value at risk to volatility goes from 2.334 at one step, the normal's
-2.326 as it must, to 2.480 at ten. And aggregation pulls the total towards
+2.326 as it must, to 2.480 at ten summed and 2.421 compounded. And aggregation
+pulls the total towards
 normality while the one-step quantile keeps the whole of the innovation's own
 tail, pushing it back down.
 
