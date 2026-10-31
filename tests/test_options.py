@@ -106,7 +106,7 @@ def _survey() -> tuple[list[Option], dict[str, Signature], set[str]]:
     for path in sorted(PACKAGE.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf8"), str(path))
 
-        def walk(node: ast.AST, prefix: str = "") -> None:
+        def walk(node: ast.AST, prefix: str = "", module: Path = path) -> None:
             for child in ast.iter_child_nodes(node):
                 if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
                     if child.name.startswith("_"):
@@ -120,16 +120,16 @@ def _survey() -> tuple[list[Option], dict[str, Signature], set[str]]:
                     required = len(names) - len(arguments.defaults)
                     for name in names[required:]:
                         if not name.startswith("_"):
-                            options.append(Option(prefix + child.name, name, path))
+                            options.append(Option(prefix + child.name, name, module))
                     for argument, default in zip(
                         arguments.kwonlyargs, arguments.kw_defaults, strict=True
                     ):
                         if default is not None and not argument.arg.startswith("_"):
-                            options.append(Option(prefix + child.name, argument.arg, path))
+                            options.append(Option(prefix + child.name, argument.arg, module))
                 elif isinstance(child, ast.ClassDef):
                     if child.name.startswith("_"):
                         continue
-                    declared_in[child.name] = path
+                    declared_in[child.name] = module
                     own: list[tuple[str, bool]] = []
                     for statement in child.body:
                         if isinstance(statement, ast.AnnAssign) and isinstance(

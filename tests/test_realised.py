@@ -415,7 +415,7 @@ class TestTheBaselineItIsMeasuredAgainst:
             efficiency(samples, Estimator.CLOSE_TO_CLOSE, Estimator.PARKINSON)
         # And the estimator's own refusal still names the estimator.
         flat = tuple(Bars("flat", tuple(flat_bar() for _ in range(10))) for _ in range(5))
-        with pytest.raises(ValueError, match="^parkinson did not vary"):
+        with pytest.raises(ValueError, match=r"^parkinson did not vary"):
             efficiency(flat, Estimator.PARKINSON)
 
 

@@ -37,6 +37,7 @@ from shortfall.extreme import (
     ExtremeRisk,
     GeneralisedPareto,
     ImpossibleFit,
+    MeanExcess,
     NotEnoughTail,
     OutsideTheFit,
     TailMethod,
@@ -820,7 +821,7 @@ class TestHowFarDownTheCurveStarts:
 
     SIZE = 4000
 
-    def curve(self, fraction: float, **rest: float) -> tuple:
+    def curve(self, fraction: float, **rest: float) -> tuple[MeanExcess, ...]:
         rng = random.Random(53)
         losses = pareto_sample(rng, 0.2, 0.03, self.SIZE)
         return mean_excess_curve(
