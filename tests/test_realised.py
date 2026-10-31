@@ -344,6 +344,81 @@ class TestEfficiency:
             efficiency(flat, Estimator.PARKINSON)
 
 
+class TestTheBaselineItIsMeasuredAgainst:
+    """The baseline is an option, and until now only its default was ever used.
+
+    What makes it checkable is that every ratio comes from the same six sampling
+    variances, so the figures are not independent: the ratio of two estimators
+    equals the ratio of their ratios against any third. That is an exact
+    identity rather than a tolerance, and it holds across all thirty-six ordered
+    pairs -- so it says the baseline argument reaches the arithmetic it is
+    supposed to reach, which a single off-default call would not.
+    """
+
+    def test_the_ratio_is_transitive_across_all_thirty_six_pairs(self) -> None:
+        samples = batch(7)
+        against_close = {
+            estimator: efficiency(samples, estimator, Estimator.CLOSE_TO_CLOSE)
+            for estimator in Estimator
+        }
+        pairs = 0
+        worst = 0.0
+        for first in Estimator:
+            for second in Estimator:
+                direct = efficiency(samples, first, second)
+                implied = against_close[first] / against_close[second]
+                worst = max(worst, abs(direct - implied) / abs(implied))
+                pairs += 1
+        assert pairs == 36
+        # Floating-point residue only: the same products in a different order.
+        assert worst < 1e-14, worst
+
+    @pytest.mark.parametrize("estimator", list(Estimator))
+    def test_any_estimator_against_itself_is_exactly_one(self, estimator: Estimator) -> None:
+        # One number divided by itself, which is the exactness that is
+        # available here. Not approx: if this ever needs a tolerance, the two
+        # sides have stopped being the same quantity.
+        assert efficiency(batch(7), estimator, estimator) == 1.0
+
+    def test_choosing_the_baseline_changes_the_answer(self) -> None:
+        samples = batch(7)
+        against_close = efficiency(samples, Estimator.YANG_ZHANG, Estimator.CLOSE_TO_CLOSE)
+        against_parkinson = efficiency(samples, Estimator.YANG_ZHANG, Estimator.PARKINSON)
+        assert against_close == pytest.approx(6.78, rel=0.02)
+        assert against_parkinson == pytest.approx(1.35, rel=0.05)
+        # Measured against a sharper baseline a good estimator looks worse,
+        # which is the whole reason the argument exists.
+        assert against_parkinson < against_close
+
+    def test_a_flat_baseline_is_named_in_its_own_refusal(self) -> None:
+        # The two refusals are distinguishable, and reaching the baseline's one
+        # needs a sample where the baseline does not vary and the estimator
+        # does. Every bar here has the same log range, so Parkinson returns the
+        # same number for every sample; the levels drift, so the closes do not.
+        # That branch had never been reached, because nobody had ever chosen a
+        # baseline.
+        rng = random.Random(4242)
+        samples = []
+        for index in range(5):
+            bars = []
+            for _ in range(10):
+                # One high and one low throughout, so log(high / low) is the
+                # same float every time rather than merely the same number.
+                bars.append(
+                    Bar(rng.uniform(99.5, 101.5), 102.0, 99.0, rng.uniform(99.5, 101.5))
+                )
+            samples.append(Bars(f"same-range-{index}", tuple(bars)))
+        parkinson_values = {realised_variance(sample, Estimator.PARKINSON) for sample in samples}
+        assert len(parkinson_values) == 1
+        assert len({realised_variance(s, Estimator.CLOSE_TO_CLOSE) for s in samples}) == 5
+        with pytest.raises(ValueError, match="the baseline parkinson did not vary"):
+            efficiency(samples, Estimator.CLOSE_TO_CLOSE, Estimator.PARKINSON)
+        # And the estimator's own refusal still names the estimator.
+        flat = tuple(Bars("flat", tuple(flat_bar() for _ in range(10))) for _ in range(5))
+        with pytest.raises(ValueError, match=r"^parkinson did not vary"):
+            efficiency(flat, Estimator.PARKINSON)
+
+
 class TestDriftSensitivity:
     """Which estimators read a trend as volatility, and by how much."""
 
@@ -589,3 +664,27 @@ class TestTheFiguresInTheReadme:
     def test_the_gap_table(self, estimator: Estimator, expected: float) -> None:
         got = volatility_ratio(batch(29, gap_ratio=1.0), estimator, SIGMA * math.sqrt(2.0))
         assert got == pytest.approx(expected, abs=1.5e-3)
+
+
+def test_the_module_says_how_many_estimators_it_has_and_is_right() -> None:
+    """A count in prose with nothing recomputing it stops being true quietly.
+
+    This one already had: the module docstring opened by saying five estimators
+    are here, above a table with six rows, beside an enum with six members and a
+    dispatch table with six entries. Nothing counted, so nothing noticed.
+    """
+    import shortfall.realised as module
+
+    spelled = {4: "four", 5: "five", 6: "six", 7: "seven"}
+    count = len(Estimator)
+    assert count == 6
+    doc = module.__doc__ or ""
+    assert f"{spelled[count]} estimators are here" in doc.lower()
+    for wrong in set(spelled.values()) - {spelled[count]}:
+        assert f"{wrong} estimators are here" not in doc.lower()
+    # And the table in the same docstring, whose rows are the real inventory.
+    table = doc.lower().replace("-", " ")
+    for estimator in Estimator:
+        assert estimator.value.replace("-", " ") in table
+    assert len(module._ESTIMATORS) == count
+    assert set(module._ESTIMATORS) == set(Estimator)

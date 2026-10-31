@@ -727,3 +727,63 @@ def test_the_whitening_checks_the_width_of_the_point_it_is_given() -> None:
     assert transform.to_factors([1.0]) == pytest.approx([0.2])
     with pytest.raises(NotQuadratic, match="2 coordinates and the form has 1"):
         transform.to_factors([1.0, 1.0])
+
+
+class TestThePanelCount:
+    """The Simpson panel count: what the default is worth, and what it refuses.
+
+    Nothing outside the module had ever chosen it, so neither half had been
+    checked. The convergence figures below are the reason the default can be
+    called converged rather than asserted to be, and the refusal is a fix: a
+    count below two used to be rounded up to two, and a negative one produced a
+    negative step with an empty interior loop, so the tail integral came back
+    with the wrong sign.
+    """
+
+    LONG = standard_form(Exposure(delta=DELTA, gamma=LONG_GAMMA), COVARIANCE)
+    SHORT = standard_form(Exposure(delta=DELTA, gamma=SHORT_GAMMA), COVARIANCE)
+
+    def test_the_default_is_converged_on_a_bounded_support(self) -> None:
+        reference = quadratic_shortfall(self.LONG, 0.01, panels=4096)
+        default = quadratic_shortfall(self.LONG, 0.01)
+        # The figure quoted in the docstring, read rather than guessed.
+        assert abs(default - reference) / abs(reference) == pytest.approx(1.27e-9, rel=0.1)
+
+    def test_the_default_is_converged_on_an_unbounded_one(self) -> None:
+        reference = quadratic_shortfall(self.SHORT, 0.05, panels=4096)
+        default = quadratic_shortfall(self.SHORT, 0.05)
+        assert abs(default - reference) / abs(reference) == pytest.approx(2.7e-13, rel=0.2)
+
+    def test_a_coarse_count_is_accepted_and_costs_what_it_costs(self) -> None:
+        # Choosing it has to change the answer, or the option is decoration.
+        reference = quadratic_shortfall(self.LONG, 0.01, panels=4096)
+        coarse = quadratic_shortfall(self.LONG, 0.01, panels=8)
+        assert coarse != quadratic_shortfall(self.LONG, 0.01)
+        assert abs(coarse - reference) / abs(reference) == pytest.approx(4.14e-5, rel=0.1)
+        # Monotone improvement, which a quadrature should have and is the
+        # cheapest evidence that the panels are reaching the integral at all.
+        errors = [
+            abs(quadratic_shortfall(self.LONG, 0.01, panels=panels) - reference)
+            for panels in (8, 32, 128, 512)
+        ]
+        assert errors == sorted(errors, reverse=True)
+
+    @pytest.mark.parametrize("panels", [1, 0, -4, -512])
+    def test_a_count_below_two_is_refused(self, panels: int) -> None:
+        with pytest.raises(ValueError, match="at least two panels"):
+            quadratic_shortfall(self.LONG, 0.01, panels=panels)
+
+    def test_the_sign_a_negative_count_used_to_produce(self) -> None:
+        # What the refusal is protecting against, computed rather than
+        # described: the old code's -4 panels gave an interior loop over
+        # range(1, -4), which is empty, and a negative step.
+        quantile = quadratic_quantile(self.LONG, 0.01)
+        low, _ = form_support(self.LONG)
+        panels = -4
+        step = (quantile - low) / panels
+        total = quadratic_cdf(self.LONG, low) + quadratic_cdf(self.LONG, quantile)
+        assert list(range(1, panels)) == []
+        old = quantile - (total * step / 3.0) / 0.01
+        true = quadratic_shortfall(self.LONG, 0.01, panels=4096)
+        assert abs(old - true) / abs(true) == pytest.approx(0.2473, abs=1e-3)
+        assert old > true  # A smaller loss than the book actually faces.

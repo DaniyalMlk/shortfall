@@ -47,7 +47,7 @@ python examples/worst_case_scenario.py  # joint stress against one factor at a t
 Each exits non-zero if a figure moves. [A worked example](#a-worked-example)
 below goes through the first of them in full.
 
-Behind them: 2074 tests, run on Python 3.10 through 3.13.
+Behind them: 2158 tests, run on Python 3.10 through 3.13.
 
 ## Installing
 

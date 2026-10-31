@@ -689,3 +689,110 @@ class TestTheStationaryStart:
             else:
                 high = middle
         assert 0.5 * (low + high) == pytest.approx(0.3189, abs=5e-4)
+
+
+class TestRegimesThatDoNotShareAMean:
+    """Two regimes with different means, which nothing had ever built.
+
+    Every mixture in this module's tests, its docstring and its README has zero
+    mean in both components. That is the smallest interesting case for the
+    tails, and it is the *least* interesting one for the central moments: at
+    equal means every displacement in the binomial expansion is zero, so the
+    whole shift term of :meth:`NormalMixture.central_moment` is dead code and
+    the skewness is zero whatever the expansion does with it. Three of the
+    ``two_regime`` arguments had never been anything but their defaults, and
+    these are what they buy.
+
+    The reference is written out by hand from the normal's own central moments
+    rather than taken from the module: with displacement ``d = m - c`` and
+    deviation ``s``, a component contributes ``s^2 + d^2`` to the second central
+    moment, ``3 s^2 d + d^3`` to the third and ``3 s^4 + 6 s^2 d^2 + d^4`` to
+    the fourth. Nothing in those expressions shares a line with the loop under
+    test.
+    """
+
+    WEIGHT = 0.1
+    CALM = (0.4, 0.8)
+    STRESS = (-2.5, 3.0)
+
+    @property
+    def mixture(self) -> NormalMixture:
+        return NormalMixture.two_regime(
+            stress=self.WEIGHT,
+            calm_mean=self.CALM[0],
+            calm_deviation=self.CALM[1],
+            stress_mean=self.STRESS[0],
+            stress_deviation=self.STRESS[1],
+        )
+
+    def parts(self) -> list[tuple[float, float, float]]:
+        return [
+            (1.0 - self.WEIGHT, self.CALM[0], self.CALM[1]),
+            (self.WEIGHT, self.STRESS[0], self.STRESS[1]),
+        ]
+
+    def test_the_components_come_out_calm_first_as_documented(self) -> None:
+        # The docstring promises an order that `responsibilities` relies on, and
+        # unequal means are the only way to tell the two components apart.
+        components = self.mixture.components
+        assert [one.mean for one in components] == [self.CALM[0], self.STRESS[0]]
+
+    def test_the_mean_is_the_weighted_mean(self) -> None:
+        expected = math.fsum(w * m for w, m, _ in self.parts())
+        assert self.mixture.mean == pytest.approx(expected, rel=0, abs=1e-15)
+        assert expected == pytest.approx(0.11, abs=1e-15)
+
+    def test_the_variance_is_within_plus_between(self) -> None:
+        centre = math.fsum(w * m for w, m, _ in self.parts())
+        expected = math.fsum(w * (s * s + (m - centre) ** 2) for w, m, s in self.parts())
+        assert self.mixture.variance == pytest.approx(expected, rel=1e-15)
+        assert expected == pytest.approx(2.2329, abs=1e-12)
+
+    def test_the_third_central_moment_is_no_longer_zero(self) -> None:
+        centre = math.fsum(w * m for w, m, _ in self.parts())
+        expected = math.fsum(
+            w * (3.0 * s * s * (m - centre) + (m - centre) ** 3) for w, m, s in self.parts()
+        )
+        assert self.mixture.central_moment(3) == pytest.approx(expected, rel=1e-13)
+        # And the equal-mean case it was always measured on, where this term
+        # cannot see anything at all.
+        assert NormalMixture.two_regime(stress=0.05, stress_deviation=4.0).skewness == 0.0
+        assert self.mixture.skewness == pytest.approx(-2.4881, abs=1e-3)
+
+    def test_the_fourth_central_moment_against_its_own_expansion(self) -> None:
+        centre = math.fsum(w * m for w, m, _ in self.parts())
+        expected = math.fsum(
+            w
+            * (
+                3.0 * s**4
+                + 6.0 * s * s * (m - centre) ** 2
+                + (m - centre) ** 4
+            )
+            for w, m, s in self.parts()
+        )
+        assert self.mixture.central_moment(4) == pytest.approx(expected, rel=1e-13)
+        assert self.mixture.excess_kurtosis == pytest.approx(10.4639, abs=1e-3)
+
+    @pytest.mark.parametrize("probability", [0.001, 0.01, 0.05, 0.5, 0.95, 0.999])
+    def test_the_quantile_inverts_the_distribution_function(self, probability: float) -> None:
+        # The bracket is the smallest and largest component quantile, and with
+        # unequal means those are no longer symmetric about zero -- which is the
+        # part a zero-mean fixture cannot exercise.
+        quantile = self.mixture.quantile(probability)
+        assert self.mixture.cdf(quantile) == pytest.approx(probability, abs=1e-12)
+
+    def test_shifting_the_whole_mixture_shifts_only_the_mean(self) -> None:
+        moved = self.mixture.shifted(1.75)
+        assert moved.mean == pytest.approx(self.mixture.mean + 1.75, rel=1e-15)
+        assert moved.variance == pytest.approx(self.mixture.variance, rel=1e-15)
+        assert moved.skewness == pytest.approx(self.mixture.skewness, rel=1e-12)
+
+    def test_an_all_stress_mixture_ignores_the_calm_arguments(self) -> None:
+        # The branch that drops the calm component entirely: with the stressed
+        # weight at one the calm mean must not reach the answer.
+        only = NormalMixture.two_regime(
+            stress=1.0, calm_mean=50.0, calm_deviation=9.0, stress_mean=-2.5
+        )
+        assert len(only.components) == 1
+        assert only.mean == pytest.approx(-2.5, abs=1e-15)
+        assert only.skewness == 0.0

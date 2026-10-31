@@ -37,6 +37,7 @@ from shortfall.extreme import (
     ExtremeRisk,
     GeneralisedPareto,
     ImpossibleFit,
+    MeanExcess,
     NotEnoughTail,
     OutsideTheFit,
     TailMethod,
@@ -805,3 +806,101 @@ def test_the_estimate_is_not_a_scalable_risk_object() -> None:
     assert isinstance(estimate, ExtremeRisk)
     assert not hasattr(estimate, "scaled_to")
     assert not hasattr(estimate, "volatility")
+
+
+class TestHowFarDownTheCurveStarts:
+    """``from_fraction``: which part of the sample the curve's thresholds cover.
+
+    Never chosen before, so the index arithmetic behind it had only ever run at
+    one half. What makes the option checkable without reaching into that
+    arithmetic is the promise the docstring makes about it -- the lowest
+    threshold is the one exceeded by ``from_fraction`` of the sample -- which is
+    a statement about exceedance counts and can be read straight off the
+    returned curve.
+    """
+
+    SIZE = 4000
+
+    def curve(self, fraction: float, **rest: float) -> tuple[MeanExcess, ...]:
+        rng = random.Random(53)
+        losses = pareto_sample(rng, 0.2, 0.03, self.SIZE)
+        return mean_excess_curve(
+            losses, points=10, from_fraction=fraction, minimum_exceedances=50, **rest
+        )
+
+    @pytest.mark.parametrize("fraction", [0.1, 0.25, 0.5, 0.9])
+    def test_the_first_threshold_is_exceeded_by_that_fraction(self, fraction: float) -> None:
+        first = self.curve(fraction)[0]
+        assert first.exceedances == pytest.approx(fraction * self.SIZE, rel=0.02)
+
+    def test_a_wider_curve_starts_lower_and_covers_more(self) -> None:
+        narrow = self.curve(0.1)
+        wide = self.curve(0.9)
+        assert wide[0].threshold < narrow[0].threshold
+        assert wide[0].exceedances > 8 * narrow[0].exceedances
+        # Both end in the same place: the top of the curve is fixed by
+        # `minimum_exceedances`, not by where it started.
+        assert wide[-1].exceedances == narrow[-1].exceedances
+
+    def test_the_whole_sample_is_allowed_and_starts_at_the_smallest_loss(self) -> None:
+        rng = random.Random(53)
+        losses = pareto_sample(rng, 0.2, 0.03, self.SIZE)
+        whole = mean_excess_curve(
+            losses, points=10, from_fraction=1.0, minimum_exceedances=50
+        )
+        assert whole[0].threshold == min(-value for value in losses) or whole[
+            0
+        ].threshold == pytest.approx(min(losses), abs=1e-12)
+        assert whole[0].exceedances == self.SIZE - 1
+
+    @pytest.mark.parametrize("fraction", [0.0, -0.5, 1.5])
+    def test_a_fraction_outside_the_unit_interval_is_refused(self, fraction: float) -> None:
+        with pytest.raises(ValueError, match="fraction in"):
+            mean_excess_curve([float(index) for index in range(200)], from_fraction=fraction)
+
+    def test_a_fraction_too_narrow_for_the_exceedance_floor_says_so(self) -> None:
+        # The second refusal, which names both knobs because either one fixes
+        # it. A curve confined to the top 10% of two hundred losses starts above
+        # the point where a hundred and ninety can still lie above it, and the
+        # message says to widen the fraction rather than to narrow it.
+        with pytest.raises(NotEnoughTail, match="raise `from_fraction`"):
+            mean_excess_curve(
+                [float(index) for index in range(200)],
+                from_fraction=0.1,
+                minimum_exceedances=190,
+            )
+        # The same floor over the whole sample is fine, which is what makes the
+        # advice in that message correct rather than merely plausible.
+        assert len(mean_excess_curve(
+            [float(index) for index in range(200)],
+            points=4,
+            from_fraction=1.0,
+            minimum_exceedances=190,
+        )) > 1
+
+    @pytest.mark.parametrize("fraction", [0.25, 0.5, 0.9])
+    def test_the_top_of_the_curve_reaches_the_floor_it_was_given(self, fraction: float) -> None:
+        # What `minimum_exceedances` is for: the highest threshold is the
+        # highest one that still leaves that many above it. The curve used to
+        # stop a whole gap short of it -- 245 exceedances against a floor of 50
+        # -- so the knob that decides how far into the tail the diagnostic looks
+        # was diluted by a factor that nothing documented.
+        curve = self.curve(fraction)
+        assert curve[-1].exceedances == 50
+
+    def test_how_far_up_the_tail_it_reaches_does_not_depend_on_the_resolution(self) -> None:
+        # `points` is documented as how many points. It used to decide the top
+        # threshold as well: on this sample four points reached 2,800
+        # exceedances and forty reached 640.
+        rng = random.Random(29)
+        losses = pareto_sample(rng, 0.3, 0.04, 20000)
+        tops = {
+            mean_excess_curve(losses, points=points, minimum_exceedances=400)[-1].threshold
+            for points in (4, 8, 12, 20, 40)
+        }
+        assert len(tops) == 1
+        counts = {
+            mean_excess_curve(losses, points=points, minimum_exceedances=400)[-1].exceedances
+            for points in (4, 8, 12, 20, 40)
+        }
+        assert counts == {400}
