@@ -664,3 +664,27 @@ class TestTheFiguresInTheReadme:
     def test_the_gap_table(self, estimator: Estimator, expected: float) -> None:
         got = volatility_ratio(batch(29, gap_ratio=1.0), estimator, SIGMA * math.sqrt(2.0))
         assert got == pytest.approx(expected, abs=1.5e-3)
+
+
+def test_the_module_says_how_many_estimators_it_has_and_is_right() -> None:
+    """A count in prose with nothing recomputing it stops being true quietly.
+
+    This one already had: the module docstring opened by saying five estimators
+    are here, above a table with six rows, beside an enum with six members and a
+    dispatch table with six entries. Nothing counted, so nothing noticed.
+    """
+    import shortfall.realised as module
+
+    spelled = {4: "four", 5: "five", 6: "six", 7: "seven"}
+    count = len(Estimator)
+    assert count == 6
+    doc = module.__doc__ or ""
+    assert f"{spelled[count]} estimators are here" in doc.lower()
+    for wrong in set(spelled.values()) - {spelled[count]}:
+        assert f"{wrong} estimators are here" not in doc.lower()
+    # And the table in the same docstring, whose rows are the real inventory.
+    table = doc.lower().replace("-", " ")
+    for estimator in Estimator:
+        assert estimator.value.replace("-", " ") in table
+    assert len(module._ESTIMATORS) == count
+    assert set(module._ESTIMATORS) == set(Estimator)
