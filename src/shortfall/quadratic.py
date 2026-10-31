@@ -692,7 +692,26 @@ def quadratic_shortfall(form: StandardForm, probability: float, *, panels: int =
     relative 1e-12 of the integral so far, and the walk is refused if it does
     not get there — an unconverged tail integral reported as a risk number is
     worse than an error.
+
+    ``panels`` is the composite Simpson rule's panel count and is rounded up to
+    an even number. The default is converged: against a 4,096-panel reference it
+    agrees to 2.5e-10 relative on a long-gamma book at 99% and 7.6e-13 on a
+    short-gamma one, and nothing is gained past it. A coarse count is a
+    legitimate choice and is accepted — eight panels costs 4.5e-3 relative,
+    which for a quick scan may be fine — but it has a floor, because a rule with
+    fewer than two panels is not a rule. A count below two used to be rounded
+    *up* to two silently, and a negative one produced a negative step, an empty
+    interior loop, and a tail integral with the wrong sign: on that same book
+    ``panels=-4`` returned a shortfall 27% smaller than the true one with no
+    error raised. That is the shape of mistake this module exists to refuse.
+
+    Raises:
+        ValueError: If ``panels`` is below two.
     """
+    if panels < 2:
+        raise ValueError(
+            f"a composite Simpson rule needs at least two panels, got {panels!r}"
+        )
     quantile = quadratic_quantile(form, probability)
     low, _ = form_support(form)
     if math.isfinite(low):
@@ -717,7 +736,11 @@ def quadratic_shortfall(form: StandardForm, probability: float, *, panels: int =
 
 
 def _simpson(form: StandardForm, low: float, high: float, panels: int) -> float:
-    """Composite Simpson of the distribution function over ``[low, high]``."""
+    """Composite Simpson of the distribution function over ``[low, high]``.
+
+    The caller validates ``panels``; the rounding here is the rule's own
+    requirement that the count be even, and it rounds up.
+    """
     if high <= low:
         return 0.0
     panels = panels + (panels % 2)
