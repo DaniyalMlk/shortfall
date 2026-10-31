@@ -6,7 +6,7 @@ the two extremes in particular say a great deal. A day that closes where it
 opened after travelling four per cent in between is not a quiet day, and the
 close-to-close estimator records it as one.
 
-Five estimators are here, and the useful thing about them is not that some are
+Six estimators are here, and the useful thing about them is not that some are
 better than others but that each buys its efficiency by assuming something:
 
 ===================== ============ ============ ==================
