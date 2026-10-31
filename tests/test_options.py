@@ -100,6 +100,7 @@ def _survey() -> tuple[list[Option], dict[str, Signature], set[str]]:
     options: list[Option] = []
     signatures: dict[str, Signature] = {}
     results: set[str] = set()
+    annotations: dict[str, set[str]] = {}
     fields: dict[str, list[tuple[str, bool]]] = {}
     declared_in: dict[str, Path] = {}
 
@@ -131,11 +132,14 @@ def _survey() -> tuple[list[Option], dict[str, Signature], set[str]]:
                         continue
                     declared_in[child.name] = module
                     own: list[tuple[str, bool]] = []
+                    mentioned: set[str] = set()
                     for statement in child.body:
                         if isinstance(statement, ast.AnnAssign) and isinstance(
                             statement.target, ast.Name
                         ):
                             own.append((statement.target.id, statement.value is not None))
+                            _returned(statement.annotation, mentioned)
+                    annotations[child.name] = mentioned
                     fields[child.name] = own
                     signatures.setdefault(
                         child.name, Signature(tuple(name for name, _ in own))
@@ -143,6 +147,20 @@ def _survey() -> tuple[list[Option], dict[str, Signature], set[str]]:
                     walk(child, child.name + ".")
 
         walk(tree)
+
+    # A type handed back inside something handed back is handed back too: a
+    # result's own fields can name types that are never a return annotation of
+    # their own, and without this closure their defaults would be read as
+    # offers.
+    frontier = set(results)
+    while frontier:
+        reached: set[str] = set()
+        for name in frontier:
+            for mentioned_type in annotations.get(name, set()):
+                if mentioned_type not in results:
+                    reached.add(mentioned_type)
+        results |= reached
+        frontier = reached
 
     for name, own in fields.items():
         if name in results:
