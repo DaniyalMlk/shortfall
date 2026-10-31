@@ -186,6 +186,15 @@ def mean_excess_curve(
     share almost all of their data, so the curve is far smoother than the
     independent scatter of its points would be, which makes a spurious straight
     stretch easy to see.
+
+    The three arguments divide the work cleanly, and did not always. The two
+    ends are ``from_fraction`` and ``minimum_exceedances``: the lowest threshold
+    is the one exceeded by that fraction of the sample, and the highest is the
+    highest one that still leaves that many exceedances above it.  ``points``
+    sets the resolution between them and nothing else. It used to set the top
+    end as well — the thresholds were spread at ``span / points`` and so stopped
+    a whole gap short — which meant asking for more points also reached further
+    into the tail, and the slope read off the curve moved with it.
     """
     ordered = sorted(_losses(losses))
     if points < 2:
@@ -217,9 +226,18 @@ def mean_excess_curve(
             f"leave {minimum_exceedances} above its first threshold; raise "
             "`from_fraction` or lower `minimum_exceedances`"
         )
-    step = span / points
+    # Spread the thresholds across the whole usable range, endpoints included.
+    # Dividing the span by ``points`` rather than by ``points - 1`` left the
+    # last threshold a whole gap short of the top, so the curve stopped well
+    # below the highest threshold its own ``minimum_exceedances`` allowed — on
+    # 20,000 losses with a floor of 400 the top point left 1,200 — and *how far*
+    # short depended on ``points``, which is documented as how many points and
+    # not as how far up the tail to look. Four points reached 2,800 exceedances
+    # and forty reached 640 on the same data, so the slope read off the curve
+    # moved with a number meant to change only its resolution.
+    step = (span - 1) / (points - 1)
     indices = sorted(
-        {first + min(span - 1, int(index * step)) for index in range(points)}
+        {min(first + span - 1, first + round(index * step)) for index in range(points)}
     )
     curve: list[MeanExcess] = []
     for index in indices:
