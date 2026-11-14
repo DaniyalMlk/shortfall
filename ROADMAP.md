@@ -1539,3 +1539,36 @@ equality is not, because asserting it would mean deciding here which of those
 forty-nine are public — the judgement this phase just moved out of the gate and
 into the modules. Closing it means giving those three modules an `__all__` and
 completing the other four, after which the equality replaces the containment.
+
+## Phase 30 — Counting what the page claims about itself
+
+- [x] The front page's phase count recomputed from the roadmap rather than
+      remembered: it said seven and enumerated seven, and the roadmap had
+      twenty-nine sections
+- [x] The suite-size guard reading every figure the page states instead of the
+      first, since `re.search` returns one match and the page states two
+- [x] The second figure corrected, which had drifted to 1,928 against a real
+      2,170 with nothing reading it either way
+- [x] The count of stated figures pinned at two, so a third appearing is looked
+      at rather than averaged in
+- [x] Phase numbering checked for duplicates, gaps and order as well as for its
+      total, because a document whose count is checked and whose numbering is
+      not can still hold two phase sevens
+
+### Why the guard could not see it
+
+```python
+claimed = re.search(r"([\d,]+) tests", README.read_text())
+```
+
+A guard that stops at the first match on a two-thousand-line page is a guard
+over the first match. The figure at the top of the page was maintained because
+it was the one that failed; the figure in the development instructions was never
+read by anything, so it drifted freely.
+
+The fix is demonstrated rather than asserted. With the second figure set to 900
+against a real 2,170, the original single-match guard computes 2,170, finds it
+inside the ±25% band and **passes**; the replacement reads both figures and
+fails on the second. That the drift it actually had — about 11% — would still
+have been inside the band is the point: the bound was never the thing that was
+broken, the reading was.

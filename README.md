@@ -9,7 +9,7 @@ when it is working from too little data. This library is built around those
 three, and the numerics are checked against closed forms and published results
 rather than against themselves.
 
-`ROADMAP.md` says what is built. All twenty-nine phases are done. The first
+`ROADMAP.md` says what is built. All thirty phases are done. The first
 seven are the foundation: return series and covariance estimation with its
 diagnostics, parametric and historical value at risk and expected shortfall,
 Euler risk contributions and risk parity, factor models and risk attribution,
