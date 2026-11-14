@@ -1492,3 +1492,50 @@ from CPython 3.12 the built-in `sum` applies compensated summation to floats, so
 `sum(path)` agrees with `math.fsum` rather than with a loop. Writing `sum` there
 passes on 3.10 and 3.11 and fails on 3.12 and 3.13, one unit in the last place
 out on 587 of 1,000 paths.
+
+## Phase 29 — The surface is what the modules say it is
+
+- [x] Twenty-six names re-exported from the package root, each of them declared
+      public by the module that defines it and each raising `AttributeError`
+      from `shortfall` itself
+- [x] `linalg`'s ten the clearest case: the module declares twenty-four names
+      and the root carried fourteen, with `cholesky` typed
+      `(matrix: Matrix) -> Matrix` and `eigh` returning `tuple[Vector, Matrix]`
+      while neither `Matrix` nor `Vector` was reachable, so a caller could
+      invoke both functions and could not name what they take or return
+- [x] `MAX_SWEEPS` among them, which is the named constant behind `eigh`'s own
+      documented default
+- [x] The surface recomputed from the modules rather than compared against a
+      second hand-kept list, with a module's own `__all__` as the authority so
+      the judgement about what is public stays beside the code it is about
+- [x] A module absent from the root entirely reported as the module, not as its
+      names one at a time
+- [x] An `__all__` entry that is not an attribute of the package refused, since
+      a rename that updates the import and not the list only fails for somebody
+      doing `import *`
+- [x] The set of modules carrying no `__all__` pinned in both directions, so a
+      new module arriving without one is a decision rather than a silent
+      exemption from every check above
+
+### Why the suite could not see it
+
+Every test file here imports submodules directly — `from shortfall.linalg
+import ...` — which is the right style for a test and exactly the style that
+cannot see a missing re-export. The module is exercised in full; the surface it
+is absent from is never touched. 2158 tests, none of which read
+`shortfall.__all__`.
+
+That is the general shape worth remembering: a gap between two things, each of
+which is tested on its own. Neither test is wrong and neither can see it.
+
+### What is still not asserted
+
+Forty-nine names reach the root without appearing in any module's `__all__`.
+`copula`, `extreme` and `ranks` declare none at all, and `backtest`, `linalg`,
+`mixture` and `quadratic` have each forgotten names of their own —
+`SUPERVISORY_CONFIDENCE`, `SUPERVISORY_OBSERVATIONS`, `CONVERGED`,
+`DEFAULT_FLOOR`, `NEGLIGIBLE` and `EDGE`. The containment is asserted; the
+equality is not, because asserting it would mean deciding here which of those
+forty-nine are public — the judgement this phase just moved out of the gate and
+into the modules. Closing it means giving those three modules an `__all__` and
+completing the other four, after which the equality replaces the containment.
