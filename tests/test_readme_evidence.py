@@ -144,18 +144,34 @@ def test_the_normal_is_the_most_precise_and_the_most_wrong() -> None:
 
 
 def test_the_suite_size_on_the_front_page_is_not_wildly_stale() -> None:
-    """A loose bound, deliberately.
+    """A loose bound, deliberately, and applied to every figure rather than one.
 
     Pinning the exact count would fail on every commit that adds a test, which
     trains people to update the number without reading it. An order-of-
     magnitude check still catches the README claiming hundreds when there are
     thousands, which is the error that matters.
+
+    This used to take the *first* count on the page and check that one::
+
+        claimed = re.search(r"([\\d,]+) tests", README.read_text())
+
+    The README states the size twice -- once at the top and once in the
+    development instructions -- so the second figure was never looked at by
+    anything. It had drifted to 1,928 against a real 2,165, about 11% low:
+    inside this band, and so not the kind of error the bound is for, but
+    nothing was reading it either way. A guard that stops at the first match on
+    a two-thousand-line page is a guard over the first match, so every figure
+    the page states is checked here.
     """
     import re
 
-    claimed = re.search(r"([\d,]+) tests", README.read_text())
-    assert claimed is not None, "the README no longer states a suite size"
-    stated = int(claimed.group(1).replace(",", ""))
+    text = README.read_text()
+    stated = [int(found.replace(",", "")) for found in re.findall(r"([\d,]+) tests", text)]
+    assert stated, "the README no longer states a suite size"
+    assert len(stated) == 2, (
+        f"the README states {len(stated)} suite sizes; this test expects the two it "
+        "has always had, and a new one needs looking at rather than averaging in"
+    )
 
     collected = subprocess.run(
         [sys.executable, "-m", "pytest", "tests", "--collect-only", "-q",
@@ -168,6 +184,7 @@ def test_the_suite_size_on_the_front_page_is_not_wildly_stale() -> None:
     found = re.search(r"(\d+) tests collected", collected.stdout)
     assert found is not None, collected.stdout[-500:]
     actual = int(found.group(1))
-    assert 0.75 * actual <= stated <= 1.25 * actual, (
-        f"the README says {stated} tests and there are {actual}"
-    )
+    for figure in stated:
+        assert 0.75 * actual <= figure <= 1.25 * actual, (
+            f"the README says {figure} tests somewhere and there are {actual}"
+        )

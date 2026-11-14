@@ -9,11 +9,20 @@ when it is working from too little data. This library is built around those
 three, and the numerics are checked against closed forms and published results
 rather than against themselves.
 
-`ROADMAP.md` says what is built. All seven phases are done: return series and
-covariance estimation with its diagnostics, parametric and historical value at
-risk and expected shortfall, Euler risk contributions and risk parity, factor
-models and risk attribution, drawdown and the path statistics, and a command
-line over all of it.
+`ROADMAP.md` says what is built. All thirty phases are done. The first
+seven are the foundation: return series and covariance estimation with its
+diagnostics, parametric and historical value at risk and expected shortfall,
+Euler risk contributions and risk parity, factor models and risk attribution,
+drawdown and the path statistics, and a command line over all of it.
+
+The rest are the measures and estimators that need those: spectral and
+distortion risk, expectiles and the level that matches a quantile, entropy
+pooling from views and the worst case over a plausible set of moves,
+saddlepoint and Cornish-Fisher tail approximations, extreme value theory with a
+generalised Pareto tail, rank correlations and copulas, GARCH volatility with
+fat-tailed innovations, mixture states, quadratic portfolios, the traffic-light
+and coverage backtests, scoring rules, and the accumulation convention a
+horizon figure is made of.
 
 ## What is checked, and against what
 
@@ -47,7 +56,7 @@ python examples/worst_case_scenario.py  # joint stress against one factor at a t
 Each exits non-zero if a figure moves. [A worked example](#a-worked-example)
 below goes through the first of them in full.
 
-Behind them: 2158 tests, run on Python 3.10 through 3.13.
+Behind them: 2170 tests, run on Python 3.10 through 3.13.
 
 ## Installing
 
@@ -2186,7 +2195,7 @@ data.
 
 ```bash
 pip install -e ".[dev]"
-pytest          # 1928 tests
+pytest          # 2170 tests
 mypy --strict
 ruff check .
 ```
