@@ -17,6 +17,7 @@ from itertools import pairwise
 
 import pytest
 
+import shortfall
 from shortfall.backtest import validate
 from shortfall.distributions import normal_ppf, student_t_ppf
 from shortfall.historical import ewma_volatility
@@ -27,9 +28,9 @@ from shortfall.volatility import (
     MAX_DEGREES,
     MAX_PERSISTENCE,
     MIN_OBSERVATIONS,
-    DidNotConverge,
     FatTail,
     Garch,
+    GarchDidNotConverge,
     Innovation,
     _negative_log_likelihood,
     _nelder_mead,
@@ -505,11 +506,26 @@ def test_the_fit_never_leaves_the_admissible_region() -> None:
         assert fitted.long_run_variance > 0.0
 
 
+def test_the_package_wide_name_catches_a_garch_failure() -> None:
+    """The defect this guards against, as a caller would meet it.
+
+    ``shortfall.DidNotConverge`` used to be the risk-parity class, and the
+    GARCH optimiser raised an unrelated class of the same name from this
+    module, so ``except shortfall.DidNotConverge`` around ``fit_garch`` caught
+    nothing. Both now derive from one class, and that is the one exported.
+    """
+    data = simulate_garch(300)
+    with pytest.raises(shortfall.DidNotConverge) as raised:
+        fit_garch(data, max_iterations=3)
+    assert isinstance(raised.value, GarchDidNotConverge)
+    assert not isinstance(raised.value, shortfall.RiskParityDidNotConverge)
+
+
 def test_a_failure_to_converge_can_be_returned_instead_of_raised() -> None:
     """For a caller fitting many series who would rather see which failed than
     lose the batch."""
     data = simulate_garch(300)
-    with pytest.raises(DidNotConverge, match="variance_targeting"):
+    with pytest.raises(GarchDidNotConverge, match="variance_targeting"):
         fit_garch(data, max_iterations=3)
     relaxed = fit_garch(data, strict=False, max_iterations=3)
     assert relaxed.converged is False

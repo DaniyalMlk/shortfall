@@ -40,7 +40,7 @@ from typing import Final
 
 from .distributions import chi_square_sf, standardised_t_log_pdf
 from .parametric import Risk, normal_risk, student_t_risk
-from .series import Convention, ReturnSeries, TooShort
+from .series import Convention, DidNotConverge, ReturnSeries, TooShort
 
 
 class Innovation(str, Enum):
@@ -93,8 +93,8 @@ IDENTIFIED_DEGREES: Final = 200.0
 _LOG_2PI: Final = math.log(2.0 * math.pi)
 
 
-class DidNotConverge(RuntimeError):
-    """The likelihood optimiser ran out of iterations."""
+class GarchDidNotConverge(DidNotConverge):
+    """The GARCH likelihood optimiser ran out of iterations."""
 
 
 @dataclass(frozen=True)
@@ -635,7 +635,7 @@ def fit_garch(
         objective, start, max_iterations=max_iterations
     )
     if strict and not converged:
-        raise DidNotConverge(
+        raise GarchDidNotConverge(
             f"the likelihood optimiser did not converge in {iterations} iterations. "
             "Pass strict=False to receive the best point found, or try "
             "variance_targeting=True, which removes the worst-determined parameter "
@@ -764,9 +764,9 @@ __all__ = [
     "MAX_PERSISTENCE",
     "MIN_DEGREES",
     "MIN_OBSERVATIONS",
-    "DidNotConverge",
     "FatTail",
     "Garch",
+    "GarchDidNotConverge",
     "Innovation",
     "fat_tail_test",
     "fit_garch",

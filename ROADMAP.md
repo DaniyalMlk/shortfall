@@ -1614,3 +1614,30 @@ The probe excluded `__all__` itself twice: once by refusing names that start
 with an underscore, and once by an explicit `!= "__all__"`. Deleting the second
 left every test green, because the first already covers it. It was dead code,
 and the break that removed it is how that showed; it is gone.
+
+## Phase 32 — One name, one thing
+
+- [x] `contributions` and `volatility` each defined an unrelated class called
+      `DidNotConverge`, the root exported the risk-parity one, and so
+      `except shortfall.DidNotConverge` around a GARCH fit caught nothing
+- [x] `DidNotConverge` moved to `series`, beside the other errors more than one
+      module raises, and each iteration given a subclass of it:
+      `RiskParityDidNotConverge`, still carrying the unconverged result, and
+      `GarchDidNotConverge`
+- [x] `from shortfall.contributions import DidNotConverge` and the `volatility`
+      equivalent kept working; both now name the base, which catches what each
+      caught before
+- [x] The surface gate refusing a public name that two modules define, and a
+      name that two modules declare
+
+### Why the gate from phase 31 could not see it
+
+It asserts the root is the union of the modules' declarations, and a union of
+sets counts a name once however many modules declare it. Both modules declared
+`DidNotConverge`; the union held it once; the root held it once; equality held.
+Run against the source from before the fix, both new rules fail on exactly this
+name.
+
+The collision surfaced while writing phase 31's probe, as a side effect of
+building a table from every public name to the module that defines it. Nothing
+in the suite asked that question.

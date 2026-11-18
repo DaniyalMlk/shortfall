@@ -295,6 +295,39 @@ def test_the_root_is_exactly_the_union_of_the_declarations(
     )
 
 
+def test_no_public_name_is_defined_by_two_modules() -> None:
+    """One name, one thing.
+
+    ``contributions`` and ``volatility`` each defined a ``DidNotConverge``,
+    unrelated to each other. The root can carry one object per name, so it
+    carried the risk-parity class, and ``except shortfall.DidNotConverge``
+    around a GARCH fit caught nothing. Every check above is blind to this,
+    because a union of sets counts a name once however many modules declare it.
+    """
+    owners: dict[str, list[str]] = {}
+    for module in submodules():
+        for name in public_definitions(module):
+            owners.setdefault(name, []).append(module)
+    shared = {name: sorted(found) for name, found in owners.items() if len(found) > 1}
+    assert not shared, f"public names defined by more than one module: {shared}"
+
+
+def test_no_name_is_declared_by_two_modules() -> None:
+    """The declaration-side twin of the check above.
+
+    Both modules listed ``DidNotConverge`` in their ``__all__``. A name two
+    modules declare is either two objects, which the check above refuses, or a
+    re-export, which ``RE_EXPORTS`` must already name; either way it should not
+    pass silently through the union.
+    """
+    owners: dict[str, list[str]] = {}
+    for module, names in declared().items():
+        for name in names:
+            owners.setdefault(name, []).append(module)
+    shared = {name: sorted(found) for name, found in owners.items() if len(found) > 1}
+    assert not shared, f"names declared by more than one module: {shared}"
+
+
 def test_the_front_page_imports_from_the_package_and_not_from_inside_it() -> None:
     """No example on the front page reaches into a submodule.
 
