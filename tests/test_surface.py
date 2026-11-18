@@ -114,9 +114,10 @@ def public_names_in(source: str) -> frozenset[str]:
             names = [node.target.id]
         else:
             continue
-        found.update(
-            name for name in names if not name.startswith("_") and name != "__all__"
-        )
+        # ``__all__`` itself starts with an underscore, so this one rule excludes
+        # it too; a separate ``!= "__all__"`` test was dead code, which a break
+        # that removed it and left the suite green is how it was found.
+        found.update(name for name in names if not name.startswith("_"))
     return frozenset(found)
 
 
@@ -332,3 +333,81 @@ def test_the_probe_reads_a_surface_worth_checking(root: frozenset[str]) -> None:
         f"linalg declares {len(modules['linalg'])} names; it declared 24 when this "
         "was written, and a sharp drop means the probe or the module changed shape"
     )
+
+
+#: Source written to exercise the probe rather than to be a module. Each line
+#: is one rule, and the comment says which.
+PROBE_SOURCE = '''
+"""A docstring, which defines nothing."""
+
+from __future__ import annotations
+
+import math                      # an import is not a definition
+from pathlib import Path         # nor is this
+from typing import Final
+
+PUBLIC_CONSTANT: Final = 1.0     # an annotated bare float, as most of ours are
+PLAIN = 2                        # an unannotated one
+PAIR_ONE = PAIR_TWO = 3          # one statement, two names
+_PRIVATE = 4                     # underscore: not public
+__all__ = ["PUBLIC_CONSTANT"]    # the declaration itself is never a definition
+
+
+def public_function() -> None:
+    """A function."""
+    local_name = 5               # a name inside a body is not top level
+
+
+async def public_coroutine() -> None:
+    """An async function, which this package has none of."""
+
+
+def _private_function() -> None:
+    """Underscore again."""
+
+
+class PublicClass:
+    """A class."""
+
+    attribute = 6                # a class attribute is not a module name
+
+
+class _PrivateClass:
+    """And a private one."""
+'''
+
+
+def test_the_probe_reads_each_kind_of_definition_and_skips_each_non_definition() -> None:
+    """The probe, against source written for it.
+
+    The exclusions matter as much as the inclusions. A probe that counted
+    imports would report every module as failing to declare ``math``; one that
+    walked function bodies would report ``local_name``; one that missed
+    ``__all__`` itself would have every module failing to declare its own
+    declaration.
+    """
+    found = public_names_in(PROBE_SOURCE)
+    assert found == {
+        "PUBLIC_CONSTANT",
+        "PLAIN",
+        "PAIR_ONE",
+        "PAIR_TWO",
+        "public_function",
+        "public_coroutine",
+        "PublicClass",
+    }, f"the probe read {sorted(found)}"
+
+    # Said the other way round, so that a future widening has to break one of
+    # these deliberately rather than by accident.
+    for absent in (
+        "math",
+        "Path",
+        "Final",
+        "_PRIVATE",
+        "__all__",
+        "local_name",
+        "_private_function",
+        "_PrivateClass",
+        "attribute",
+    ):
+        assert absent not in found, f"the probe counted {absent!r} as a definition"
