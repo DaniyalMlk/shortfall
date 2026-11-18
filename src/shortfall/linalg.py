@@ -463,6 +463,7 @@ def upper_inverse_gram(upper: Matrix) -> Matrix:
 
 
 __all__ = [
+    "CONVERGED",
     "MAX_SWEEPS",
     "RESIDUAL",
     "Matrix",

@@ -645,6 +645,8 @@ def validate(
 
 __all__ = [
     "ADVISORY_MINIMUM",
+    "SUPERVISORY_CONFIDENCE",
+    "SUPERVISORY_OBSERVATIONS",
     "BadForecast",
     "CoverageTest",
     "Exceedances",

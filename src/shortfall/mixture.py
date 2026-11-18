@@ -154,6 +154,8 @@ from dataclasses import dataclass
 from .distributions import normal_cdf, normal_pdf, normal_ppf
 
 __all__ = [
+    "DEFAULT_FLOOR",
+    "NEGLIGIBLE",
     "BadMixture",
     "Component",
     "Fitted",

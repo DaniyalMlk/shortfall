@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from .backtest import (
     ADVISORY_MINIMUM,
+    SUPERVISORY_CONFIDENCE,
+    SUPERVISORY_OBSERVATIONS,
     BadForecast,
     CoverageTest,
     Exceedances,
@@ -233,6 +235,7 @@ from .horizon import (
     horizon_risk,
 )
 from .linalg import (
+    CONVERGED,
     MAX_SWEEPS,
     RESIDUAL,
     Matrix,
@@ -259,6 +262,8 @@ from .linalg import (
     upper_inverse_gram,
 )
 from .mixture import (
+    DEFAULT_FLOOR,
+    NEGLIGIBLE,
     BadMixture,
     Component,
     Fitted,
@@ -291,6 +296,7 @@ from .parametric import (
     student_t_risk,
 )
 from .quadratic import (
+    EDGE,
     NEAR_MEAN,
     DidNotSolve,
     Exposure,
@@ -432,14 +438,17 @@ __all__ = [
     "ADVISORY_MINIMUM",
     "ANNUAL",
     "BATCHES",
+    "CONVERGED",
     "COPULA_BATCHES",
     "DAILY_CALENDAR",
     "DAILY_TRADING",
     "DEFAULT_DECAY",
+    "DEFAULT_FLOOR",
     "DEFAULT_RESAMPLES",
     "DEFAULT_SWEEP_PATIENCE",
     "DEFAULT_TAIL_POINTS",
     "DEGREES_TOLERANCE",
+    "EDGE",
     "GRID_POINTS",
     "IDENTIFIED_DEGREES",
     "MAX_COPULA_ASSETS",
@@ -463,6 +472,7 @@ __all__ = [
     "MIN_PATHS",
     "MONTHLY",
     "NEAR_MEAN",
+    "NEGLIGIBLE",
     "PLOTTING_OFFSET",
     "POOL_TOLERANCE",
     "QUARTERLY",
@@ -472,6 +482,8 @@ __all__ = [
     "SHAPE_EPSILON",
     "SPAN_DENOMINATOR",
     "STALL_TOLERANCE",
+    "SUPERVISORY_CONFIDENCE",
+    "SUPERVISORY_OBSERVATIONS",
     "TAIL_FRACTION",
     "WEEKLY",
     "Allocation",
