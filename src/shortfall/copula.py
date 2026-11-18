@@ -918,3 +918,31 @@ def joint_exceedance_rate(
         raise TooShort("no draws to count exceedances in")
     hits = sum(1 for row in uniforms if all(value <= quantile for value in row))
     return hits / len(uniforms)
+
+
+__all__ = [
+    "COPULA_BATCHES",
+    "DEGREES_TOLERANCE",
+    "GRID_POINTS",
+    "MAX_COPULA_ASSETS",
+    "MAX_COPULA_DEGREES",
+    "MAX_COPULA_PATHS",
+    "MIN_COPULA_DEGREES",
+    "MIN_COPULA_OBSERVATIONS",
+    "MIN_COPULA_PATHS",
+    "TAIL_FRACTION",
+    "CopulaRisk",
+    "Family",
+    "FittedCopula",
+    "Marginal",
+    "NoGaussianBaseline",
+    "NotIdentified",
+    "TailDependence",
+    "copula_risk",
+    "fit_copula",
+    "gaussian_copula_log_likelihood",
+    "joint_exceedance_rate",
+    "simulate_copula",
+    "student_t_copula_log_likelihood",
+    "tail_dependence_coefficient",
+]

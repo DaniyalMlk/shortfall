@@ -73,6 +73,8 @@ from .contributions import (
 )
 from .copula import (
     COPULA_BATCHES,
+    DEGREES_TOLERANCE,
+    GRID_POINTS,
     MAX_COPULA_ASSETS,
     MAX_COPULA_DEGREES,
     MAX_COPULA_PATHS,
@@ -174,6 +176,9 @@ from .expectile import (
 )
 from .extreme import (
     MINIMUM_EXCEEDANCES,
+    PLOTTING_OFFSET,
+    SEARCH_SHAPE_CEILING,
+    SHAPE_EPSILON,
     ExtremeRisk,
     GeneralisedPareto,
     HillShape,
@@ -434,6 +439,8 @@ __all__ = [
     "DEFAULT_RESAMPLES",
     "DEFAULT_SWEEP_PATIENCE",
     "DEFAULT_TAIL_POINTS",
+    "DEGREES_TOLERANCE",
+    "GRID_POINTS",
     "IDENTIFIED_DEGREES",
     "MAX_COPULA_ASSETS",
     "MAX_COPULA_DEGREES",
@@ -456,10 +463,13 @@ __all__ = [
     "MIN_PATHS",
     "MONTHLY",
     "NEAR_MEAN",
+    "PLOTTING_OFFSET",
     "POOL_TOLERANCE",
     "QUARTERLY",
     "RESIDUAL",
     "SADDLE_FLOOR",
+    "SEARCH_SHAPE_CEILING",
+    "SHAPE_EPSILON",
     "SPAN_DENOMINATOR",
     "STALL_TOLERANCE",
     "TAIL_FRACTION",

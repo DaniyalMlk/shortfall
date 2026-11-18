@@ -56,8 +56,9 @@ NOT_SURFACE = frozenset({"cli"})
 
 #: The modules that declare no ``__all__``. Pinned rather than discovered, so
 #: that a new module arriving without one is a decision somebody makes here
-#: instead of a silent exemption from every check in this file.
-NO_DUNDER_ALL = frozenset({"copula", "extreme", "ranks"})
+#: instead of a silent exemption from every check in this file. Empty since
+#: ``copula``, ``extreme`` and ``ranks`` were given one.
+NO_DUNDER_ALL: frozenset[str] = frozenset()
 
 
 def submodules() -> dict[str, ModuleType]:
