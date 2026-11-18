@@ -1,7 +1,7 @@
 """The package's public surface is what its modules declare.
 
 ``src/shortfall/__init__.py`` re-exports the package's public names and it is a
-hand-maintained list, now of 367 entries. A hand-maintained list that long is a
+hand-maintained list, now of 378 entries. A hand-maintained list that long is a
 list with something missing from it, and twenty-six names were missing: declared
 public by the module that defines them, raising ``AttributeError`` from the
 package root.
@@ -29,37 +29,49 @@ beside the code it is about, and makes the gate wrong whenever a module changes
 its mind. What is asserted is a disagreement *inside* the package: a module
 declaring a name public while the root does not carry it.
 
-**Containment, not equality, and that is a gap rather than an oversight.**
-Forty-nine names reach the root without appearing in any module's ``__all__``.
-``copula``, ``extreme`` and ``ranks`` declare none at all, and four other
-modules have forgotten names of their own. Asserting that the root is *exactly*
-the union would mean deciding, here, that each of those is public — the
-judgement this file has just refused to make. Closing it means giving those
-three modules an ``__all__`` and completing the others, in the modules, after
-which the equality can replace the containment.
+**Equality, and the probe that makes it safe to assert.** The root is
+exactly the union of the module declarations plus ``__version__``. That could
+only be asserted once every module declared something and every declaration
+was complete, because until then the root offered forty-nine names no module
+claimed: ``copula``, ``extreme`` and ``ranks`` carried no ``__all__`` and four
+other modules had forgotten names of their own. Completeness is read from
+source with :mod:`ast`, not from attributes, because most of what had been
+forgotten was bare floats and ints, which carry no ``__module__`` to sweep by.
 """
 
 from __future__ import annotations
 
+import ast
 import importlib
 import pkgutil
+import re
 from collections import Counter
+from pathlib import Path
 from types import ModuleType
 
 import pytest
 
 import shortfall
 
+ROOT = Path(__file__).resolve().parent.parent
+
+#: A front-page example reaching inside the package rather than importing from it.
+SUBMODULE_IMPORT = re.compile(r"^from (shortfall\.[a-z0-9_]+) import", re.MULTILINE)
+
+#: The house style, which the check above needs to have found at least once.
+ROOT_IMPORT = re.compile(r"^from shortfall import", re.MULTILINE)
+
+#: Names the root carries that no module declares, because they belong to the
+#: package rather than to any one module.
+ROOT_ONLY = frozenset({"__version__"})
+
+#: A module declaring a name it does not itself define. None does; the set is
+#: written down so that the first one is a decision rather than an accident.
+RE_EXPORTS: frozenset[tuple[str, str]] = frozenset()
+
 #: The command line is not part of the importable surface: it is an entry point
 #: and its names are wired to ``argparse``, not to callers.
 NOT_SURFACE = frozenset({"cli"})
-
-#: The modules that declare no ``__all__``. Pinned rather than discovered, so
-#: that a new module arriving without one is a decision somebody makes here
-#: instead of a silent exemption from every check in this file. Empty since
-#: ``copula``, ``extreme`` and ``ranks`` were given one.
-NO_DUNDER_ALL: frozenset[str] = frozenset()
-
 
 def submodules() -> dict[str, ModuleType]:
     """Every importable submodule of the package, bar the entry point."""
@@ -68,6 +80,44 @@ def submodules() -> dict[str, ModuleType]:
         for info in pkgutil.iter_modules(shortfall.__path__)
         if info.name not in NOT_SURFACE
     }
+
+
+def public_definitions(module: str) -> frozenset[str]:
+    """Every public name a module defines at its top level, read from source.
+
+    Read with :mod:`ast` rather than off the imported module. An attribute
+    sweep has to decide which attributes a module *defines* as opposed to
+    imports, and the usual test, ``obj.__module__``, does not exist on a plain
+    ``int`` or ``float``. All eleven names this was written for were exactly
+    that: ``SUPERVISORY_OBSERVATIONS``, ``NEGLIGIBLE``, ``EDGE`` and the rest are
+    bare numbers an attribute probe cannot attribute to anybody.
+    """
+    source = ROOT / "src" / "shortfall" / f"{module}.py"
+    return public_names_in(source.read_text(encoding="utf-8"))
+
+
+def public_names_in(source: str) -> frozenset[str]:
+    """The public top-level names a piece of module source defines.
+
+    Separated from the file it usually reads so that it can be tested against
+    source written for the purpose: nothing in ``src/shortfall`` declares an
+    ``async def`` at the top level or assigns two names in one statement, and
+    a branch the package does not exercise is one nobody has run.
+    """
+    found: set[str] = set()
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            names = [node.name]
+        elif isinstance(node, ast.Assign):
+            names = [t.id for t in node.targets if isinstance(t, ast.Name)]
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names = [node.target.id]
+        else:
+            continue
+        found.update(
+            name for name in names if not name.startswith("_") and name != "__all__"
+        )
+    return frozenset(found)
 
 
 def declared() -> dict[str, frozenset[str]]:
@@ -167,23 +217,100 @@ def test_the_root_exports_each_name_once() -> None:
     assert not repeated, f"repeated in shortfall.__all__: {repeated}"
 
 
-def test_the_modules_without_a_declaration_are_the_ones_pinned_here() -> None:
-    """Only the three known modules carry no ``__all__``.
+def test_every_module_declares_something() -> None:
+    """No module carries no ``__all__`` at all.
 
-    Every check above is silent about a module that declares nothing, so the
-    set of modules exempt from them is written down here. A new module without
-    an ``__all__`` fails this, which is the point at which somebody decides
-    whether that is what was wanted — and the point at which the containment
-    above could become an equality.
+    Every other check here is silent about a module that declares nothing, so
+    a module without one is exempt from all of them. ``copula``, ``extreme``
+    and ``ranks`` were in exactly that position, between them responsible for
+    all forty-nine names the root offered and no module claimed.
+
+    There is no exemption list. A module with nothing public to say can
+    declare an empty ``__all__`` and say so.
     """
-    silent = {
+    silent = sorted(
         name
         for name, module in submodules().items()
         if getattr(module, "__all__", None) is None
+    )
+    assert not silent, (
+        f"modules carrying no __all__, and so exempt from every check here: {silent}"
+    )
+
+
+def test_a_module_declares_every_public_name_it_defines() -> None:
+    """``__all__`` is not a curated subset of what the module defines.
+
+    This catches the *next* omission rather than the last one: a function
+    added to a module and left out of its ``__all__`` fails here, at the
+    module, instead of reaching the root as a name nobody wired in.
+
+    Six names failed it across four modules. Two are the defaults of public
+    parameters: ``fit_mixture(floor=DEFAULT_FLOOR)`` and
+    ``convolve(negligible=NEGLIGIBLE)`` showed a caller a value they could not
+    import by name.
+    """
+    undeclared: dict[str, list[str]] = {}
+    for module, names in declared().items():
+        missing = sorted(public_definitions(module) - names)
+        if missing:
+            undeclared[module] = missing
+    assert not undeclared, (
+        f"defined at a module's top level and absent from its own __all__: {undeclared}"
+    )
+
+
+def test_a_name_a_module_declares_but_does_not_define_is_a_pinned_re_export() -> None:
+    """A module declaring a name from elsewhere is a decision, not a default.
+
+    None does today. A declaration of a name the module only imports is also
+    what a bad merge or a half-finished move looks like, so the first one has
+    to be written into ``RE_EXPORTS`` by whoever means it.
+    """
+    found = {
+        (module, name)
+        for module, names in declared().items()
+        for name in names - public_definitions(module)
     }
-    assert silent == set(NO_DUNDER_ALL), (
-        f"modules carrying no __all__: {sorted(silent)}; "
-        f"pinned: {sorted(NO_DUNDER_ALL)}"
+    assert found == set(RE_EXPORTS), (
+        f"re-exports found: {sorted(found)}; pinned: {sorted(RE_EXPORTS)}"
+    )
+
+
+def test_the_root_is_exactly_the_union_of_the_declarations(
+    root: frozenset[str],
+) -> None:
+    """Equality, not containment.
+
+    The containment above catches a name the root is missing. This catches the
+    other direction: a name the root offers that no module claims, which is
+    what a hand-kept list of nearly four hundred entries accumulates, and what
+    this one had accumulated forty-nine of.
+    """
+    union = frozenset().union(*declared().values())
+    assert root == union | ROOT_ONLY, (
+        f"only at the root: {sorted(root - union - ROOT_ONLY)}; "
+        f"only in a module: {sorted(union - root)}"
+    )
+
+
+def test_the_front_page_imports_from_the_package_and_not_from_inside_it() -> None:
+    """No example on the front page reaches into a submodule.
+
+    Every example does import from the root today. The rule is asserted so
+    that a missing re-export cannot be worked around in the document, where a
+    ``from shortfall.module import`` line reads as a style choice rather than
+    as the gap it would be.
+    """
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    reaching_in = sorted(set(SUBMODULE_IMPORT.findall(readme)))
+    assert not reaching_in, (
+        "front-page examples importing from inside the package rather than from "
+        f"it: {reaching_in}"
+    )
+    assert ROOT_IMPORT.search(readme) is not None, (
+        "no `from shortfall import` line found on the front page at all, so the "
+        "check above passed by reading nothing"
     )
 
 
