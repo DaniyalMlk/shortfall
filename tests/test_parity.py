@@ -26,10 +26,11 @@ import random
 
 import pytest
 
+import shortfall
 from shortfall.contributions import (
-    DidNotConverge,
     NegativeContribution,
     NoRiskToAllocate,
+    RiskParityDidNotConverge,
     concentration,
     diversification_ratio,
     effective_bets,
@@ -204,11 +205,25 @@ def test_running_out_of_sweeps_raises_and_carries_the_evidence() -> None:
     got.
     """
     covariance = random_covariance(6, seed=12)
-    with pytest.raises(DidNotConverge) as raised:
+    with pytest.raises(RiskParityDidNotConverge) as raised:
         risk_parity(covariance, max_sweeps=2)
     assert raised.value.result.sweeps == 2
     assert not raised.value.result.converged
     assert raised.value.result.budget_error > 0.0
+
+
+def test_the_package_wide_name_catches_it_and_the_evidence_survives() -> None:
+    """``except shortfall.DidNotConverge`` is the spelling a caller reaches for.
+
+    It catches every iteration that can stop short, and catching it by the
+    general name does not cost the caller the partial result: the instance is
+    still the specific one.
+    """
+    covariance = random_covariance(6, seed=12)
+    with pytest.raises(shortfall.DidNotConverge) as raised:
+        risk_parity(covariance, max_sweeps=2)
+    assert isinstance(raised.value, RiskParityDidNotConverge)
+    assert raised.value.result.sweeps == 2
 
 
 def test_names_are_carried_through_to_the_allocation() -> None:

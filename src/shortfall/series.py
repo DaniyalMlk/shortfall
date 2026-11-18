@@ -54,6 +54,21 @@ class Misaligned(ValueError):
     """Series that must share an index do not."""
 
 
+class DidNotConverge(RuntimeError):
+    """An iterative estimate stopped before meeting its tolerance.
+
+    The one name to catch for any of them. Each iteration that can fail raises
+    its own subclass, carrying whatever that iteration has to say about where
+    it stopped: :class:`~shortfall.contributions.RiskParityDidNotConverge` and
+    :class:`~shortfall.volatility.GarchDidNotConverge`.
+
+    Defined here, beside the other errors more than one module raises, because
+    there used to be two unrelated classes of this name, one in each of those
+    modules. The package exported one of them, so ``except
+    shortfall.DidNotConverge`` around a GARCH fit caught nothing.
+    """
+
+
 @dataclass(frozen=True)
 class ReturnSeries:
     """One asset's periodic returns, with the convention they were computed under."""
@@ -486,6 +501,7 @@ __all__ = [
     "QUARTERLY",
     "WEEKLY",
     "Convention",
+    "DidNotConverge",
     "Misaligned",
     "Panel",
     "ReturnSeries",

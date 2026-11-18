@@ -48,7 +48,7 @@ from dataclasses import dataclass
 
 from .linalg import Matrix, cholesky, dimension, eigh, matrix_vector, quadratic_form
 from .parametric import Distribution, Risk, parametric_risk
-from .series import Panel
+from .series import DidNotConverge, Panel
 
 #: Weights whose portfolio volatility falls at or below this are treated as
 #: having no risk to allocate. The Euler gradient divides by the volatility, so
@@ -397,7 +397,7 @@ def historical_shortfall_contributions(
 # -- risk parity -------------------------------------------------------------
 
 
-class DidNotConverge(RuntimeError):
+class RiskParityDidNotConverge(DidNotConverge):
     """The risk parity iteration ran out of sweeps before meeting its tolerance.
 
     Carries the unconverged :attr:`result` so the evidence can be inspected
@@ -561,7 +561,7 @@ def risk_parity(
         converged=change <= tolerance,
     )
     if not result.converged:
-        raise DidNotConverge(
+        raise RiskParityDidNotConverge(
             f"risk parity did not converge in {max_sweeps} sweeps: the last sweep "
             f"still moved a coordinate by {change:.3e} against a tolerance of "
             f"{tolerance:.3e}, and the worst risk share is {budget_error:.3e} from "
@@ -734,11 +734,11 @@ def principal_bets(weights: Sequence[float], covariance: Matrix) -> PrincipalBet
 
 __all__ = [
     "Allocation",
-    "DidNotConverge",
     "NegativeContribution",
     "NoRiskToAllocate",
     "PrincipalBets",
     "RiskParity",
+    "RiskParityDidNotConverge",
     "concentration",
     "diversification_ratio",
     "effective_bets",
