@@ -1572,3 +1572,45 @@ inside the ±25% band and **passes**; the replacement reads both figures and
 fails on the second. That the drift it actually had — about 11% — would still
 have been inside the band is the point: the bound was never the thing that was
 broken, the reading was.
+
+## Phase 31 — The root is exactly what the modules declare
+
+Closes what phase 29 left open: the surface check could assert containment and
+not equality, because forty-nine names reached the root that no module claimed.
+
+- [x] `copula`, `extreme` and `ranks` given an `__all__`, each holding every
+      public name the module defines, and the pinned set of modules exempt from
+      the surface checks emptied rather than kept
+- [x] Eleven module-level constants declared that had never reached the root:
+      five from `copula` and `extreme` that the missing declarations had hidden,
+      and six that `backtest`, `linalg`, `mixture` and `quadratic` had left out
+      of their own declarations
+- [x] `DEFAULT_FLOOR` and `NEGLIGIBLE` among them, the defaults of
+      `fit_mixture(floor=...)` and `convolve(negligible=...)`: a caller could
+      read the value in a signature and could not import the name it came from
+- [x] Declared rather than renamed private, because a module with no `__all__`
+      had already offered all of them to `import *` in the published release,
+      and the root already carries constants of exactly this kind
+- [x] The root asserted to be exactly the union of the module declarations plus
+      `__version__`, with each module's completeness read from source by `ast`
+- [x] A module declaring a name it only imports refused unless written into a
+      pinned set of re-exports, which is empty
+- [x] No front-page example importing from inside the package
+- [x] The definition probe run against source written to exercise every branch,
+      including two the package never uses (`async def`, two names in one
+      assignment)
+
+### Why the probe reads source
+
+All eleven forgotten names were bare floats and ints. The obvious completeness
+probe imports the module and asks which of its attributes it defined, using
+`obj.__module__` to tell a definition from an import; a plain number has no
+`__module__`, so that probe cannot attribute any of them to anybody and would
+have reported nothing missing.
+
+### A condition that could not do anything
+
+The probe excluded `__all__` itself twice: once by refusing names that start
+with an underscore, and once by an explicit `!= "__all__"`. Deleting the second
+left every test green, because the first already covers it. It was dead code,
+and the break that removed it is how that showed; it is gone.
