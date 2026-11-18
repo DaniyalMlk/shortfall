@@ -342,3 +342,17 @@ def elliptical_correlation(
         for i in range(size)
     ]
     return normalised, True
+
+
+__all__ = [
+    "MINIMUM_RANK_OBSERVATIONS",
+    "correlation_from_kendall",
+    "correlation_from_spearman",
+    "elliptical_correlation",
+    "kendall_matrix",
+    "kendall_tau",
+    "kendall_tau_quadratic",
+    "ranks_of",
+    "spearman_matrix",
+    "spearman_rho",
+]

@@ -114,6 +114,7 @@ from .distributions import normal_cdf, normal_pdf, normal_ppf
 from .linalg import Matrix, Vector, check_symmetric, cholesky, eigh
 
 __all__ = [
+    "EDGE",
     "NEAR_MEAN",
     "DidNotSolve",
     "Exposure",
