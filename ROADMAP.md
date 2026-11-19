@@ -74,8 +74,8 @@ does not. A test that only agrees with the code it tests is not evidence.
       refusing to publish when the tag and the declared version disagree
 - [x] The sdist and the wheel each installed into a clean environment and made to
       produce an estimate, on pull requests as well as on a tag
-- [ ] A first release on the index, which waits on the publisher being registered
-      there for this project
+- [x] A first release on the index: 0.1.0, wheel and sdist, published by the
+      tag-driven workflow once the publisher was registered for this project
 
 ## Phase 9 — Gaps found by using it
 
@@ -933,7 +933,6 @@ distributions and nothing else, how far apart can value at risk be?
       tail weight, against the limits the marginals imply
 - [x] A command-line route that prints the covariance-based figure inside the
       interval it is one point of
-- [ ] A first release on the package index
 
 ### The oracle is complete mixability, and it exposed a divisibility problem
 
