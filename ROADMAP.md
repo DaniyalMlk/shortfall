@@ -1640,3 +1640,18 @@ name.
 The collision surfaced while writing phase 31's probe, as a side effect of
 building a table from every public name to the module that defines it. Nothing
 in the suite asked that question.
+
+## Phase 33 — Done, with two items open
+
+The front page said every phase was done while the roadmap had two unchecked
+items, both for a release that had already happened: one under phase 8 and a
+copy, worded differently, under phase 23. The docs gate counted the phases and
+did not look inside them.
+
+- [x] Phase 8's release item recording 0.1.0, and the copy under phase 23
+      removed, so the roadmap has no open items
+- [x] A page claiming every phase done held to having no unchecked item
+- [x] The release pinned as recorded, since a published version is permanent
+- [x] No open item allowed to mention a release, however worded
+- [x] `main`'s roadmap before this change, the copy restored, and the box
+      reopened, each confirmed to fail first
