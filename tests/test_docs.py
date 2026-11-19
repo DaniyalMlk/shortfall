@@ -146,3 +146,48 @@ def test_the_probe_reads_a_roadmap_worth_counting(roadmap: str) -> None:
         "this was written, and a sharp drop means the pattern stopped matching"
     )
     assert numbers[0] == 1, f"the first phase found is numbered {numbers[0]}"
+
+
+#: Any unchecked item, and an unchecked item that mentions a release however
+#: it is worded. The release was open twice, worded differently each time.
+UNCHECKED = re.compile(r"^\s*- \[ \]", re.MULTILINE)
+OPEN_RELEASE_ITEM = re.compile(r"^- \[ \] .*\brelease\b", re.MULTILINE | re.IGNORECASE)
+RELEASE_ITEM = re.compile(r"^- \[( |x)\] A first release on the index", re.MULTILINE)
+
+
+def release_recorded(roadmap: str) -> bool:
+    found: list[str] = RELEASE_ITEM.findall(roadmap)
+    assert len(found) == 1, f"expected one release item in the roadmap, found {len(found)}"
+    return found[0] == "x"
+
+
+def test_a_page_that_says_every_phase_is_done_has_no_open_item(
+    readme: str, roadmap: str
+) -> None:
+    """The page said all thirty-two phases were done with two items still open."""
+    stated_phase_count(readme)  # the claim is on the page, so it has to be true
+    assert UNCHECKED.findall(roadmap) == []
+
+
+def test_the_release_stays_recorded(roadmap: str) -> None:
+    """0.1.0 is published, and a published version is permanent."""
+    assert release_recorded(roadmap)
+
+
+def test_no_open_item_waits_on_a_release(roadmap: str) -> None:
+    assert OPEN_RELEASE_ITEM.findall(roadmap) == []
+
+
+def test_an_open_release_item_is_seen_however_it_is_worded() -> None:
+    assert len(OPEN_RELEASE_ITEM.findall("- [ ] A first release on the package index\n")) == 1
+    assert OPEN_RELEASE_ITEM.findall("- [x] A first release on the index: 0.1.0\n") == []
+
+
+@pytest.mark.parametrize(("box", "expected"), [("x", True), (" ", False)])
+def test_release_recorded_reads_the_box(box: str, expected: bool) -> None:
+    assert release_recorded(f"- [{box}] A first release on the index: 0.1.0\n") is expected
+
+
+def test_a_missing_release_item_is_an_error() -> None:
+    with pytest.raises(AssertionError, match="found 0"):
+        release_recorded("## Phase 8 — X\n")
