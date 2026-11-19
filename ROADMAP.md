@@ -74,8 +74,8 @@ does not. A test that only agrees with the code it tests is not evidence.
       refusing to publish when the tag and the declared version disagree
 - [x] The sdist and the wheel each installed into a clean environment and made to
       produce an estimate, on pull requests as well as on a tag
-- [ ] A first release on the index, which waits on the publisher being registered
-      there for this project
+- [x] A first release on the index: 0.1.0, wheel and sdist, published by the
+      tag-driven workflow once the publisher was registered for this project
 
 ## Phase 9 — Gaps found by using it
 
@@ -933,7 +933,6 @@ distributions and nothing else, how far apart can value at risk be?
       tail weight, against the limits the marginals imply
 - [x] A command-line route that prints the covariance-based figure inside the
       interval it is one point of
-- [ ] A first release on the package index
 
 ### The oracle is complete mixability, and it exposed a divisibility problem
 
@@ -1641,3 +1640,18 @@ name.
 The collision surfaced while writing phase 31's probe, as a side effect of
 building a table from every public name to the module that defines it. Nothing
 in the suite asked that question.
+
+## Phase 33 — Done, with two items open
+
+The front page said every phase was done while the roadmap had two unchecked
+items, both for a release that had already happened: one under phase 8 and a
+copy, worded differently, under phase 23. The docs gate counted the phases and
+did not look inside them.
+
+- [x] Phase 8's release item recording 0.1.0, and the copy under phase 23
+      removed, so the roadmap has no open items
+- [x] A page claiming every phase done held to having no unchecked item
+- [x] The release pinned as recorded, since a published version is permanent
+- [x] No open item allowed to mention a release, however worded
+- [x] `main`'s roadmap before this change, the copy restored, and the box
+      reopened, each confirmed to fail first
