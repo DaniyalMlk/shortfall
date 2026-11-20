@@ -9,7 +9,7 @@ when it is working from too little data. This library is built around those
 three, and the numerics are checked against closed forms and published results
 rather than against themselves.
 
-`ROADMAP.md` says what is built. All thirty-four phases are done. The first
+`ROADMAP.md` says what is built. All thirty-five phases are done. The first
 seven are the foundation: return series and covariance estimation with its
 diagnostics, parametric and historical value at risk and expected shortfall,
 Euler risk contributions and risk parity, factor models and risk attribution,
@@ -56,7 +56,7 @@ python examples/worst_case_scenario.py  # joint stress against one factor at a t
 Each exits non-zero if a figure moves. [A worked example](#a-worked-example)
 below goes through the first of them in full.
 
-Behind them: 2179 tests, run on Python 3.10 through 3.13.
+Behind them: 2205 tests, run on Python 3.10 through 3.13.
 
 ## Installing
 
@@ -2191,11 +2191,36 @@ is reported as degenerate — its log-likelihood is a property of the floor
 (-17.80 at 1e-8, -3.99 at 1e-14 on the same forty points) rather than of the
 data.
 
+## Known gaps
+
+What the library does not do. Each line is held by a test,
+`tests/test_known_gaps.py`, that calls the entry point involved and fails once
+the gap is closed, so a line cannot outlive the gap it describes. What the
+library refuses on purpose is documented beside the behaviour it protects and
+is not repeated here.
+
+- **The variance process has no leverage term.** GARCH(1,1) sees each return
+  only through its square, so a 5% loss and a 5% gain raise tomorrow's variance
+  by exactly the same amount. Equity volatility responds more to the loss. The
+  innovations can be fat-tailed; the recursion is symmetric either way.
+- **The copulas are elliptical, so both tails are the same.** Gaussian and
+  Student t, with one tail-dependence coefficient serving the crash tail and
+  the rally tail alike. Assets that fall together more often than they rise together
+  need an Archimedean family, and there is none.
+- **The regime chain has two states.** `fit_mixture` will fit three or more
+  components, but `occupation_law`, `stationary` and `horizon_mixture` describe
+  a calm and a stressed state only, and refuse a longer chain.
+- **Covariance shrinkage has one target.** `ledoit_wolf` shrinks towards
+  constant correlation and takes no argument choosing anything else, such as
+  the identity or a single-factor model. `clip_spectrum` in `cleaning` is the
+  alternative on offer, which is a different estimator rather than another
+  target.
+
 ## Development
 
 ```bash
 pip install -e ".[dev]"
-pytest          # 2179 tests
+pytest          # 2205 tests
 mypy --strict
 ruff check .
 ```
