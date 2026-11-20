@@ -1655,3 +1655,21 @@ did not look inside them.
 - [x] No open item allowed to mention a release, however worded
 - [x] `main`'s roadmap before this change, the copy restored, and the box
       reopened, each confirmed to fail first
+
+## Phase 34 — A chain with two states, checked
+
+`occupation_law`, `stationary` and `horizon_mixture` are written for a two-state
+chain and took whatever tuple they were given. A three-state description was
+accepted: the recursion visits states 0 and 1 only, so the third state's
+starting mass vanished and the law summed to 0.8. `horizon_mixture` then built
+a `NormalMixture`, which normalises its weights on construction, and the lost
+fifth was spread over the surviving components where nothing could see it. A
+one-state description failed with a bare `IndexError`.
+
+- [x] All three refuse a `persistence` or `start` without exactly two entries,
+      with a `BadMixture` naming the argument and how many entries it had
+- [x] Too long and too short, for each argument and each function, confirmed
+      to fail against the previous source first
+
+The command line always builds a two-value chain from `--stay-calm` and
+`--stay-stressed`, so no command was affected.
