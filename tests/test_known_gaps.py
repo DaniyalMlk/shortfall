@@ -207,6 +207,19 @@ def test_every_predicate_is_distinct() -> None:
     assert len({p.__name__ for p in predicates}) == len(predicates)
 
 
+def test_a_bold_lead_does_not_wrap() -> None:
+    """A lead broken across two lines is invisible to the bullet reader.
+
+    The reader matches within a line, so a wrapped lead is not seen and the page
+    appears to list one gap fewer. The first draft of this list had exactly
+    that: the copula line's lead ran onto a second line, and only the
+    same-lines check noticed. This names the cause rather than the symptom.
+    """
+    for line in gaps_section().splitlines():
+        if line.startswith("- **"):
+            assert line.count("**") >= 2, f"the bold lead wraps: {line!r}"
+
+
 def test_the_section_ends_at_the_heading_that_follows_it() -> None:
     """The list is bounded by the next ``## `` heading, whatever it is called.
 
