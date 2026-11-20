@@ -756,6 +756,21 @@ class Occupation:
         )
 
 
+def _two_states(name: str, values: tuple[float, ...]) -> None:
+    """Refuse a chain description that does not have exactly two entries.
+
+    The recursions below visit states 0 and 1 and nothing else, so a third
+    entry is not an error they would notice: its mass is dropped, and a
+    :class:`NormalMixture` built from what remains normalises the shortfall
+    away. One entry fails by indexing, which says nothing about why.
+    """
+    if len(values) != 2:
+        raise BadMixture(
+            f"the regime chain has two states, so {name} has two entries; "
+            f"got {len(values)}"
+        )
+
+
 def occupation_law(
     persistence: tuple[float, float], start: tuple[float, float], periods: int
 ) -> Occupation:
@@ -769,6 +784,8 @@ def occupation_law(
     """
     if periods < 1:
         raise BadMixture(f"a horizon is at least one period, got {periods!r}")
+    _two_states("persistence", persistence)
+    _two_states("start", start)
     for value in (*persistence, *start):
         if not 0.0 <= value <= 1.0:
             raise BadMixture(f"a transition probability is in [0, 1], got {value!r}")
@@ -808,6 +825,7 @@ def stationary(persistence: tuple[float, float]) -> tuple[float, float]:
     distribution, which shows up as a square-root ratio that says more about
     the starting point than about the regimes.
     """
+    _two_states("persistence", persistence)
     stay_zero, stay_one = persistence
     leaving = (1.0 - stay_zero) + (1.0 - stay_one)
     if leaving <= 0.0:

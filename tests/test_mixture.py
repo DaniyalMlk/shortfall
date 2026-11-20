@@ -600,6 +600,43 @@ class TestRefusals:
         with pytest.raises(BadMixture, match="starting distribution sums"):
             occupation_law((0.9, 0.9), (0.5, 0.6), 4)
 
+    @pytest.mark.parametrize(
+        "persistence, start, name, entries",
+        [
+            ((0.9, 0.8, 0.7), (0.5, 0.5), "persistence", 3),
+            ((0.9,), (0.5, 0.5), "persistence", 1),
+            ((0.9, 0.8), (0.5, 0.3, 0.2), "start", 3),
+            ((0.9, 0.8), (1.0,), "start", 1),
+        ],
+    )
+    def test_a_chain_without_two_states(
+        self,
+        persistence: tuple[float, ...],
+        start: tuple[float, ...],
+        name: str,
+        entries: int,
+    ) -> None:
+        """Too long used to lose the extra state's mass; too short, to index out."""
+        message = f"{name} has two entries; got {entries}"
+        with pytest.raises(BadMixture, match=message):
+            occupation_law(persistence, start, 5)  # type: ignore[arg-type]
+        with pytest.raises(BadMixture, match=message):
+            horizon_mixture(
+                Component(1.0, 0.0, 1.0), Component(1.0, 0.0, 3.0), persistence, start, 5  # type: ignore[arg-type]
+            )
+
+    def test_a_three_state_chain_is_not_silently_two(self) -> None:
+        """The case that returned a law summing to 0.8, and a mixture that hid it."""
+        with pytest.raises(BadMixture, match="got 3"):
+            occupation_law((0.9, 0.8, 0.7), (0.5, 0.3, 0.2), 5)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("persistence", [(0.9,), (0.9, 0.8, 0.7)])
+    def test_a_stationary_distribution_of_the_wrong_chain(
+        self, persistence: tuple[float, ...]
+    ) -> None:
+        with pytest.raises(BadMixture, match=f"got {len(persistence)}"):
+            stationary(persistence)  # type: ignore[arg-type]
+
     def test_a_transition_outside_the_unit_interval(self) -> None:
         with pytest.raises(BadMixture, match="transition probability"):
             occupation_law((1.4, 0.9), (0.5, 0.5), 4)
