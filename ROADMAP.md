@@ -1673,3 +1673,36 @@ one-state description failed with a bare `IndexError`.
 
 The command line always builds a two-value chain from `--stay-calm` and
 `--stay-stressed`, so no command was affected.
+
+## Phase 35 — What the library does not do
+
+A front page that lists what is built and never what is not leaves a reader to
+find the second list by trying things. The gaps were surveyed for absences with
+an entry point to call, rather than refusals that are documented as deliberate,
+and four came out.
+
+- [x] A known-gaps section: no leverage term in the variance recursion,
+      elliptical copulas only, a two-state regime chain, one shrinkage target
+- [x] One predicate per line in `tests/test_known_gaps.py`, each calling the
+      function involved or pinning its exact signature, so the feature arriving
+      under any name breaks it
+- [x] The page and the predicates held to the same lines in the same order,
+      and the section to ending at the heading that follows it
+- [x] Nine breaks, each caught: a leverage argument, an asymmetric recursion
+      with the signature untouched, an Archimedean family, a longer chain
+      accepted, a shrinkage target argument, and a bullet deleted, added,
+      swapped and pushed under a new heading
+
+### Two things the first draft of the predicates got wrong
+
+The shrinkage target was asserted equal, bit for bit, to
+`constant_correlation_target` of the sample. It is not, and should not be:
+`ledoit_wolf` builds the target from the maximum-likelihood covariance, where
+the asymptotics are written, and then rescales it onto the unbiased variances,
+so the two constructions agree to rounding and differ in the last place. The
+claim is that the target is the same, so the check is a relative bound of
+`1e-13`.
+
+The copula predicate fitted both families with fixed degrees of freedom, and
+the Gaussian fit refused, correctly: it has none. The refusal under test is of
+the family, so each family is fitted the way it is meant to be.
