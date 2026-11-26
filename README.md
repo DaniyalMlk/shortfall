@@ -9,7 +9,7 @@ when it is working from too little data. This library is built around those
 three, and the numerics are checked against closed forms and published results
 rather than against themselves.
 
-`ROADMAP.md` says what is built. All thirty-five phases are done. The first
+`ROADMAP.md` says what is built. All thirty-six phases are done. The first
 seven are the foundation: return series and covariance estimation with its
 diagnostics, parametric and historical value at risk and expected shortfall,
 Euler risk contributions and risk parity, factor models and risk attribution,
@@ -56,7 +56,7 @@ python examples/worst_case_scenario.py  # joint stress against one factor at a t
 Each exits non-zero if a figure moves. [A worked example](#a-worked-example)
 below goes through the first of them in full.
 
-Behind them: 2205 tests, run on Python 3.10 through 3.13.
+Behind them: 2221 tests, run on Python 3.10 through 3.13.
 
 ## Installing
 
@@ -2220,7 +2220,7 @@ is not repeated here.
 
 ```bash
 pip install -e ".[dev]"
-pytest          # 2205 tests
+pytest          # 2221 tests
 mypy --strict
 ruff check .
 ```
