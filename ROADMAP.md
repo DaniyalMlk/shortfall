@@ -1706,3 +1706,22 @@ claim is that the target is the same, so the check is a relative bound of
 The copula predicate fitted both families with fixed degrees of freedom, and
 the Gaussian fit refused, correctly: it has none. The refusal under test is of
 the family, so each family is fitted the way it is meant to be.
+
+## Phase 36 — What a caller can name
+
+`cholesky` and `eigh` were callable from the root before `Matrix` and `Vector`
+were, and phase 29's surface work kept that case as a named check. It covers
+the pairs it names. It cannot see a type that nothing declares, such as a
+private class in a public signature, or an alias the root binds a different
+copy of.
+
+- [x] `tests/test_signatures.py`: every package class and alias a reachable
+      signature or root-class field is written in is bound at the root
+- [x] Classes and aliases compared by identity, aliases read from source since
+      resolving a hint expands them, and each spelled name resolved in the
+      module that wrote it
+- [x] A survey floor, and `Matrix` and `Vector` shown to be spelled in
+      reachable signatures, so the checks cannot pass by reading nothing
+- [x] Five ways of breaking it confirmed to fail first; a private class in a
+      signature and an equal but distinct `Matrix` at the root are caught by
+      this check alone
