@@ -101,6 +101,7 @@ from .copula import (
 )
 from .covariance import (
     Diagnostics,
+    ShrinkageTarget,
     Shrunk,
     average_correlation,
     blend,
@@ -110,6 +111,7 @@ from .covariance import (
     ledoit_wolf,
     portfolio_variance,
     sample_covariance,
+    scaled_identity_target,
 )
 from .distributions import (
     OutOfDomain,
@@ -585,6 +587,7 @@ __all__ = [
     "Scenario",
     "Scores",
     "ShortfallSpectrum",
+    "ShrinkageTarget",
     "Shrunk",
     "Spectrum",
     "StandardForm",
@@ -774,6 +777,7 @@ __all__ = [
     "sample_covariance",
     "sample_expected_shortfall",
     "sample_expectile",
+    "scaled_identity_target",
     "shortfall_contributions",
     "simulate_copula",
     "simulate_expected_shortfall_null",
