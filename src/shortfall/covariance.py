@@ -301,15 +301,7 @@ def ledoit_wolf(
     centred = panel.demeaned()
 
     # pi: summed variance of the sample entries.
-    pi_matrix = [[0.0] * size for _ in range(size)]
-    for i in range(size):
-        for j in range(i, size):
-            total = sum(
-                (centred[i][t] * centred[j][t] - sample_ml[i][j]) ** 2 for t in range(count)
-            )
-            value = total / count
-            pi_matrix[i][j] = value
-            pi_matrix[j][i] = value
+    pi_matrix = _summed_entry_variance(panel, sample_ml)
     pi = sum(pi_matrix[i][j] for i in range(size) for j in range(size))
 
     # rho: the diagonal terms, plus the cross terms that come from the target
