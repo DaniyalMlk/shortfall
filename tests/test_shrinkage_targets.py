@@ -11,6 +11,7 @@ to satisfy whatever the data.
 from __future__ import annotations
 
 import random
+from pathlib import Path
 
 import pytest
 
@@ -232,3 +233,24 @@ def test_which_target_wins_is_a_question_about_the_data(
     assert wins[0] <= won <= wins[1]
     measured = sum(identity) / sum(correlated)
     assert ratio[0] < measured < ratio[1]
+
+
+def test_the_front_page_quotes_these_measurements() -> None:
+    """The README's two ratios, read off this file's own helper and pinned to the
+    sentence that states them, so neither can drift from the measurement."""
+    readme = (Path(__file__).resolve().parent.parent / "README.md").read_text(encoding="utf-8")
+    start = readme.index("### Shrinkage, and saying how much of it happened")
+    section = readme[start : readme.index("\n### ", start + 1)]
+    sentence = " ".join(section.split())
+    ratios = []
+    for loading, scales in ((0.0, EQUAL), (0.0, UNEQUAL), (0.6, EQUAL)):
+        correlated, identity = _frobenius_losses(loading, scales, range(20))
+        ratios.append(sum(identity) / sum(correlated))
+    # The two adverse cases are quoted as one figure, so they must round alike.
+    assert f"{ratios[1]:.2f}" == f"{ratios[2]:.2f}"
+    claim = (
+        f"is {ratios[0]:.3f} times constant correlation's when the assets are "
+        f"uncorrelated and equally volatile, and {ratios[1]:.2f} times when they are "
+        "uncorrelated with differing volatilities or share a common factor."
+    )
+    assert claim in sentence

@@ -23,7 +23,6 @@ signature, so that a new parameter under any name breaks it.
 from __future__ import annotations
 
 import inspect
-import math
 import random
 import re
 from collections.abc import Callable
@@ -35,6 +34,7 @@ from shortfall import (
     BadMixture,
     Family,
     Panel,
+    ShrinkageTarget,
     constant_correlation_target,
     fit_copula,
     fit_garch,
@@ -43,6 +43,7 @@ from shortfall import (
     horizon_mixture,
     ledoit_wolf,
     occupation_law,
+    scaled_identity_target,
     stationary,
     tail_dependence_coefficient,
 )
@@ -132,26 +133,29 @@ def the_regime_chain_has_two_states() -> None:
     assert parameters(horizon_mixture) == ("calm", "stressed", "persistence", "start", "periods")
 
 
-def shrinkage_has_one_target() -> None:
-    """No argument chooses the target, and the target it uses is constant correlation."""
-    assert parameters(ledoit_wolf) == ("panel",)
-    shrunk = ledoit_wolf(correlated_panel(5))
-    # Built from the maximum-likelihood covariance and then rescaled onto the
-    # unbiased variances, so it agrees with a direct construction to rounding
-    # and not to the bit.
+def shrinkage_has_no_factor_target() -> None:
+    """Two targets, both built from the sample alone, and no series to build a third.
+
+    A single-factor target needs the factor: a market return beside the panel.
+    So the line holds while ``ledoit_wolf`` takes nothing but the panel and a
+    choice between exactly these two, and a factor spelling is refused by value.
+    """
+    assert parameters(ledoit_wolf) == ("panel", "target")
+    assert {member.name for member in ShrinkageTarget} == {
+        "CONSTANT_CORRELATION",
+        "SCALED_IDENTITY",
+    }
+    panel = correlated_panel(5)
+    for spelling in ("single_factor", "factor", "market"):
+        with pytest.raises(ValueError, match="not a valid ShrinkageTarget"):
+            ledoit_wolf(panel, target=spelling)
+    # Both that exist run on the same panel, so the refusal is about the target.
+    shrunk = ledoit_wolf(panel)
     direct = constant_correlation_target(shrunk.sample)
     for built, expected in zip(shrunk.target, direct, strict=True):
         assert built == pytest.approx(expected, rel=1e-13, abs=0.0)
-    # And the target is not the identity or a diagonal: its off-diagonal
-    # entries are all one correlation times the two volatilities.
-    rho = [
-        shrunk.target[i][j] / math.sqrt(shrunk.target[i][i] * shrunk.target[j][j])
-        for i in range(3)
-        for j in range(3)
-        if i < j
-    ]
-    assert rho[0] > 0.1
-    assert max(rho) - min(rho) < 1e-12
+    identity = ledoit_wolf(panel, target=ShrinkageTarget.SCALED_IDENTITY)
+    assert identity.target == scaled_identity_target(identity.sample)
 
 
 GAPS: tuple[tuple[str, Callable[[], None]], ...] = (
@@ -168,8 +172,8 @@ GAPS: tuple[tuple[str, Callable[[], None]], ...] = (
         the_regime_chain_has_two_states,
     ),
     (
-        "Covariance shrinkage has one target.",
-        shrinkage_has_one_target,
+        "Covariance shrinkage has no factor-model target.",
+        shrinkage_has_no_factor_target,
     ),
 )
 
