@@ -1746,6 +1746,11 @@ target".
       bit-identical on five panels
 - [x] The known-gaps line narrowed and its predicate rewritten to pin exactly
       the two targets and refuse a factor one
+- [x] `--shrink-target` on every command that takes `--shrink`, naming a
+      target implying shrinkage, with the identity's volatility checked against
+      the library
+- [x] `bounds --shrink` honours its value as an intensity in `[0, 1]`, and
+      refuses one outside it
 
 ### The rescaling that would have made it the diagonal target
 
@@ -1757,6 +1762,18 @@ is a different estimator with a different optimum. The identity's average
 variance differs between the two conventions by exactly `T / (T - 1)`, so it is
 rescaled by that factor instead, and a test on assets of very different
 volatility fails if it is not.
+
+### A number read as a flag
+
+`bounds` declared `--shrink` as a float, "shrinkage for the covariance the
+fitted comparison uses", and passed it to the helper every other command uses,
+which tests it for truth. So `--shrink 0.001`, `--shrink 0.3` and `--shrink 0.9`
+gave byte-identical output — the estimated optimum — and the figure typed
+changed nothing. Adding the target option to the shared helper is what exposed
+it: `bounds` builds its own parser, and the first test run failed on the
+attribute that parser did not define. It now blends at the stated intensity,
+and a test asserting five intensities give five ordered figures fails against
+the old wiring.
 
 ### A ratio moves with the sample
 

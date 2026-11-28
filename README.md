@@ -56,7 +56,7 @@ python examples/worst_case_scenario.py  # joint stress against one factor at a t
 Each exits non-zero if a figure moves. [A worked example](#a-worked-example)
 below goes through the first of them in full.
 
-Behind them: 2234 tests, run on Python 3.10 through 3.13.
+Behind them: 2239 tests, run on Python 3.10 through 3.13.
 
 ## Installing
 
@@ -188,6 +188,7 @@ kendall_tau(first, second)                    # O(T log T), not O(T^2)
 shortfall risk          returns.csv --weights 0.4,0.25,0.15,0.2 --shrink
 shortfall contributions returns.csv --weights 0.4,0.25,0.15,0.2
 shortfall parity        returns.csv --shrink
+shortfall parity        returns.csv --shrink-target scaled_identity
 shortfall drawdown      returns.csv --periods 252
 shortfall factors       returns.csv --factors factors.csv
 shortfall validate      forecasts.csv --es-column es --replications 2000
