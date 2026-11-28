@@ -18,6 +18,13 @@ from statistics import NormalDist
 
 import pytest
 
+from shortfall import (
+    ShrinkageTarget,
+    blend,
+    ledoit_wolf,
+    portfolio_risk,
+    portfolio_variance,
+)
 from shortfall.cli import (
     InputError,
     build_parser,
@@ -256,6 +263,72 @@ def test_parity_reports_its_convergence(tmp_path: Path) -> None:
     assert code == 0
     assert "Converged in" in output
     assert "25.00%" in output or "33.33%" in output
+
+
+def test_the_shrinkage_target_reaches_the_estimate(tmp_path: Path) -> None:
+    """Naming a target implies shrinkage, and the identity gives a different
+    volatility from the default target, equal to the one the library computes."""
+    path = sample_file(tmp_path / "r.csv")
+    figures = {}
+    for flags in (
+        (),
+        ("--shrink",),
+        ("--shrink", "--shrink-target", "constant_correlation"),
+        ("--shrink-target", "scaled_identity"),
+    ):
+        code, output = run("--json", "risk", str(path), *flags)
+        assert code == 0
+        figures[flags] = json.loads(output)["volatility"]
+    sample, default, named, identity = figures.values()
+    assert default == named
+    assert len({sample, default, identity}) == 3
+    panel = read_table(path).panel
+    weights = [1.0 / 3.0] * 3
+    matrix = ledoit_wolf(panel, target=ShrinkageTarget.SCALED_IDENTITY).matrix
+    assert identity == pytest.approx(
+        math.sqrt(portfolio_variance(weights, matrix)), rel=1e-12, abs=0.0
+    )
+
+
+def test_an_unknown_shrinkage_target_is_a_usage_error(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit) as raised:
+        build_parser().parse_args(
+            ["risk", str(sample_file(tmp_path / "r.csv")), "--shrink-target", "factor"]
+        )
+    assert raised.value.code == 2
+
+
+def test_bounds_shrinks_by_the_intensity_it_is_given(tmp_path: Path) -> None:
+    """``bounds --shrink`` takes a number, and the number is the intensity.
+
+    It used to be passed on as a flag, so 0.001, 0.3 and 0.9 all produced the
+    estimated optimum and the figure typed changed nothing. Now each is the blend
+    of the sample and the target at that weight, and they differ in order.
+    """
+    path = sample_file(tmp_path / "r.csv")
+    fitted = []
+    for intensity in ("0", "0.001", "0.3", "0.9", "1"):
+        code, output = run("--json", "bounds", str(path), "--shrink", intensity)
+        assert code == 0
+        fitted.append(json.loads(output)["fitted_value_at_risk"])
+    assert len(set(fitted)) == len(fitted)
+    assert fitted == sorted(fitted) or fitted == sorted(fitted, reverse=True)
+    panel = read_table(path).panel
+    estimate = ledoit_wolf(panel)
+    # At 0.3 the matrix is the stated blend, whatever the estimated optimum is.
+    expected = blend(estimate.sample, estimate.target, 0.3)
+    direct = portfolio_risk([1.0 / 3.0] * 3, expected, confidence=0.99)
+    assert fitted[2] == pytest.approx(direct.value_at_risk, rel=1e-12, abs=0.0)
+
+
+@pytest.mark.parametrize("intensity", ["-0.1", "1.5"])
+def test_bounds_refuses_an_intensity_outside_the_unit_interval(
+    tmp_path: Path, intensity: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = str(sample_file(tmp_path / "r.csv"))
+    code, _ = run("bounds", path, f"--shrink={intensity}")
+    assert code == 2
+    assert "intensity in [0, 1]" in capsys.readouterr().err
 
 
 def test_drawdown_labels_the_dates_from_the_file(tmp_path: Path) -> None:

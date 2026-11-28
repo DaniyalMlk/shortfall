@@ -18,11 +18,23 @@ large reduction in variance. Ledoit and Wolf's contribution is that the optimal
 amount to pull can be estimated from the data rather than tuned, which turns a
 judgement call into an estimate with a standard error.
 
-The target here is constant correlation: every pairwise correlation replaced by
-the average of them all, variances left alone. It is the one from *Honey, I
-Shrunk the Sample Covariance Matrix* (Ledoit and Wolf, 2003), and it suits
-equities, where the dominant structure really is that everything is correlated
-with everything else by roughly the same amount.
+Two targets are offered. The default is constant correlation: every pairwise
+correlation replaced by the average of them all, variances left alone. It is the
+one from *Honey, I Shrunk the Sample Covariance Matrix* (Ledoit and Wolf, 2003),
+and it suits equities, where the dominant structure really is that everything is
+correlated with everything else by roughly the same amount.
+
+The other is the scaled identity of *A Well-Conditioned Estimator for
+Large-Dimensional Covariance Matrices* (Ledoit and Wolf, 2004): every variance
+replaced by their average and every covariance by zero. It suits assets on
+comparable scales with little correlation between them, and nothing else: it
+pulls the variances together as well as the correlations, which constant
+correlation deliberately does not. Measured on ten assets and forty
+observations, against the true matrix in squared Frobenius distance, it has
+about a seventh of constant correlation's error when the assets are
+uncorrelated and equally volatile, and more than twice it either when they are
+uncorrelated with differing volatilities or when they share a common factor.
+``tests/test_shrinkage_targets.py`` holds those three cases.
 
 The intensity is reported rather than hidden. A shrinkage of 0.05 says the
 sample was informative; one of 0.9 says the answer is mostly the target and the
@@ -34,6 +46,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from enum import Enum
 
 from .linalg import (
     Matrix,
@@ -176,6 +189,29 @@ def constant_correlation_target(covariance: Matrix) -> Matrix:
     return out
 
 
+def scaled_identity_target(covariance: Matrix) -> Matrix:
+    """The average variance times the identity: ``(trace / n) * I``.
+
+    The target of Ledoit and Wolf (2004). It shares the sample's total variance
+    and nothing else, so the blend keeps the trace of the sample — the sum of the
+    eigenvalues — while pulling every eigenvalue towards their mean. That is the
+    sense in which it is well conditioned: the smallest eigenvalue of the blend
+    is at least ``intensity`` times the average variance.
+    """
+    size = len(covariance)
+    level = sum(covariance[i][i] for i in range(size)) / size if size else 0.0
+    return [[level if i == j else 0.0 for j in range(size)] for i in range(size)]
+
+
+class ShrinkageTarget(str, Enum):
+    """What :func:`ledoit_wolf` pulls the sample covariance towards."""
+
+    #: Sample variances, and every correlation replaced by their average.
+    CONSTANT_CORRELATION = "constant_correlation"
+    #: The average variance on the diagonal and zero elsewhere.
+    SCALED_IDENTITY = "scaled_identity"
+
+
 def blend(sample: Matrix, target: Matrix, intensity: float) -> Matrix:
     """``intensity * target + (1 - intensity) * sample``."""
     if not 0.0 <= intensity <= 1.0:
@@ -207,16 +243,25 @@ class Shrunk:
     #: clamp rather than by the data.
     unclamped_intensity: float
     diagnostics: Diagnostics
+    #: Which target :attr:`target` is. :attr:`average_correlation` is the
+    #: sample's under either, and is the target's own parameter only under
+    #: constant correlation.
+    target_kind: ShrinkageTarget = ShrinkageTarget.CONSTANT_CORRELATION
 
     @property
     def clamped(self) -> bool:
         return self.unclamped_intensity != self.intensity
 
 
-def ledoit_wolf(panel: Panel) -> Shrunk:
-    """Shrink the sample covariance towards constant correlation.
+def ledoit_wolf(
+    panel: Panel, *, target: ShrinkageTarget | str = ShrinkageTarget.CONSTANT_CORRELATION
+) -> Shrunk:
+    """Shrink the sample covariance towards a structured target.
 
-    Follows Ledoit and Wolf (2003). The optimal intensity minimises the expected
+    ``target`` chooses it: constant correlation by default, following Ledoit and
+    Wolf (2003), or the scaled identity of Ledoit and Wolf (2004). The
+    derivation below is the 2003 one; the identity is the special case noted
+    under ``rho``. The optimal intensity minimises the expected
     squared Frobenius distance to the true covariance, and decomposes into three
     estimated quantities:
 
@@ -227,6 +272,10 @@ def ledoit_wolf(panel: Panel) -> Shrunk:
         The summed asymptotic covariance between the sample entries and the
         target's, since the target is itself estimated from the same data. This
         is the term a naive derivation omits, and omitting it over-shrinks.
+        Under the scaled identity it is zero: the 2004 estimator treats the
+        average variance as known, since it is one number estimated from all
+        ``n T`` observations, and the intensity reduces to the paper's
+        ``b^2 / d^2``.
     ``gamma``
         The squared distance between sample and target — the bias shrinkage
         would introduce. Large ``gamma`` argues for shrinking less.
@@ -238,26 +287,21 @@ def ledoit_wolf(panel: Panel) -> Shrunk:
     against. Mixing the two conventions inside the formula is a subtle way to
     get an intensity that is wrong by a factor of ``T/(T-1)``.
     """
+    kind = ShrinkageTarget(target)
     panel.require(2, "Ledoit-Wolf shrinkage")
     count = panel.observations
     size = panel.assets
 
     sample_ml = sample_covariance(panel, ddof=0)
     unbiased = sample_covariance(panel, ddof=1)
-    target = constant_correlation_target(sample_ml)
+    if kind is ShrinkageTarget.SCALED_IDENTITY:
+        return _towards_identity(panel, sample_ml, unbiased)
+    target_ml = constant_correlation_target(sample_ml)
     mean_correlation = average_correlation(sample_ml)
     centred = panel.demeaned()
 
     # pi: summed variance of the sample entries.
-    pi_matrix = [[0.0] * size for _ in range(size)]
-    for i in range(size):
-        for j in range(i, size):
-            total = sum(
-                (centred[i][t] * centred[j][t] - sample_ml[i][j]) ** 2 for t in range(count)
-            )
-            value = total / count
-            pi_matrix[i][j] = value
-            pi_matrix[j][i] = value
+    pi_matrix = _summed_entry_variance(panel, sample_ml)
     pi = sum(pi_matrix[i][j] for i in range(size) for j in range(size))
 
     # rho: the diagonal terms, plus the cross terms that come from the target
@@ -295,7 +339,7 @@ def ledoit_wolf(panel: Panel) -> Shrunk:
 
     # gamma: the bias shrinkage would introduce.
     gamma = sum(
-        (target[i][j] - sample_ml[i][j]) ** 2 for i in range(size) for j in range(size)
+        (target_ml[i][j] - sample_ml[i][j]) ** 2 for i in range(size) for j in range(size)
     )
 
     # gamma == 0 means sample and target coincide, so shrinkage changes nothing
@@ -305,15 +349,69 @@ def ledoit_wolf(panel: Panel) -> Shrunk:
     unclamped = 1.0 if gamma == 0.0 else (pi - rho) / gamma / count
     intensity = min(1.0, max(0.0, unclamped))
 
-    matrix = blend(unbiased, _rescale_target(target, unbiased), intensity)
+    rescaled = _rescale_target(target_ml, unbiased)
+    matrix = blend(unbiased, rescaled, intensity)
     return Shrunk(
         matrix=matrix,
         intensity=intensity,
         sample=unbiased,
-        target=_rescale_target(target, unbiased),
+        target=rescaled,
         average_correlation=mean_correlation,
         unclamped_intensity=unclamped,
         diagnostics=diagnose(matrix, observations=count),
+    )
+
+
+def _summed_entry_variance(panel: Panel, sample_ml: Matrix) -> Matrix:
+    """``pi_ij``: the asymptotic variance of each sample covariance entry."""
+    count = panel.observations
+    size = panel.assets
+    centred = panel.demeaned()
+    out = [[0.0] * size for _ in range(size)]
+    for i in range(size):
+        for j in range(i, size):
+            total = sum(
+                (centred[i][t] * centred[j][t] - sample_ml[i][j]) ** 2 for t in range(count)
+            )
+            value = total / count
+            out[i][j] = value
+            out[j][i] = value
+    return out
+
+
+def _towards_identity(panel: Panel, sample_ml: Matrix, unbiased: Matrix) -> Shrunk:
+    """Ledoit and Wolf (2004): ``pi / gamma / T`` with ``rho`` nil.
+
+    The target is rescaled by multiplying, not through correlations as the
+    constant-correlation one is: its diagonal is the *average* variance, so
+    rebuilding it on the sample's own variances would turn the scaled identity
+    into the diagonal of the sample — a different target with a different
+    optimum. Both conventions' averages differ by exactly ``T / (T - 1)``,
+    which is the factor the unbiased target carries.
+    """
+    count = panel.observations
+    size = panel.assets
+    target_ml = scaled_identity_target(sample_ml)
+    pi_matrix = _summed_entry_variance(panel, sample_ml)
+    pi = sum(pi_matrix[i][j] for i in range(size) for j in range(size))
+    gamma = sum(
+        (target_ml[i][j] - sample_ml[i][j]) ** 2 for i in range(size) for j in range(size)
+    )
+    # gamma == 0 is a sample that already is a multiple of the identity, read as
+    # under constant correlation: taking the target costs nothing.
+    unclamped = 1.0 if gamma == 0.0 else pi / gamma / count
+    intensity = min(1.0, max(0.0, unclamped))
+    rescaled = scaled_identity_target(unbiased)
+    matrix = blend(unbiased, rescaled, intensity)
+    return Shrunk(
+        matrix=matrix,
+        intensity=intensity,
+        sample=unbiased,
+        target=rescaled,
+        average_correlation=average_correlation(sample_ml),
+        unclamped_intensity=unclamped,
+        diagnostics=diagnose(matrix, observations=count),
+        target_kind=ShrinkageTarget.SCALED_IDENTITY,
     )
 
 
@@ -352,6 +450,7 @@ def portfolio_variance(weights: Vector, covariance: Matrix) -> float:
 
 __all__ = [
     "Diagnostics",
+    "ShrinkageTarget",
     "Shrunk",
     "average_correlation",
     "blend",
@@ -361,4 +460,5 @@ __all__ = [
     "ledoit_wolf",
     "portfolio_variance",
     "sample_covariance",
+    "scaled_identity_target",
 ]

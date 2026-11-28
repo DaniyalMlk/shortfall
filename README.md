@@ -9,7 +9,7 @@ when it is working from too little data. This library is built around those
 three, and the numerics are checked against closed forms and published results
 rather than against themselves.
 
-`ROADMAP.md` says what is built. All thirty-six phases are done. The first
+`ROADMAP.md` says what is built. All thirty-seven phases are done. The first
 seven are the foundation: return series and covariance estimation with its
 diagnostics, parametric and historical value at risk and expected shortfall,
 Euler risk contributions and risk parity, factor models and risk attribution,
@@ -56,7 +56,7 @@ python examples/worst_case_scenario.py  # joint stress against one factor at a t
 Each exits non-zero if a figure moves. [A worked example](#a-worked-example)
 below goes through the first of them in full.
 
-Behind them: 2221 tests, run on Python 3.10 through 3.13.
+Behind them: 2239 tests, run on Python 3.10 through 3.13.
 
 ## Installing
 
@@ -188,6 +188,7 @@ kendall_tau(first, second)                    # O(T log T), not O(T^2)
 shortfall risk          returns.csv --weights 0.4,0.25,0.15,0.2 --shrink
 shortfall contributions returns.csv --weights 0.4,0.25,0.15,0.2
 shortfall parity        returns.csv --shrink
+shortfall parity        returns.csv --shrink-target scaled_identity
 shortfall drawdown      returns.csv --periods 252
 shortfall factors       returns.csv --factors factors.csv
 shortfall validate      forecasts.csv --es-column es --replications 2000
@@ -856,10 +857,35 @@ precisely where the portfolio is about to.
 Shrinkage pulls the sample towards a structured target with far fewer parameters,
 trading a little bias for a large reduction in variance. Ledoit and Wolf's
 contribution is that the optimal amount can be *estimated* rather than tuned,
-which turns a judgement call into a number. The target here is constant
+which turns a judgement call into a number. The default target is constant
 correlation — every pairwise correlation replaced by the average of them,
 variances untouched — which suits equities, where the dominant structure really
 is that everything moves together by roughly the same amount.
+
+```python
+from shortfall import ShrinkageTarget, ledoit_wolf
+
+ledoit_wolf(panel)                                          # constant correlation
+ledoit_wolf(panel, target=ShrinkageTarget.SCALED_IDENTITY)  # Ledoit and Wolf, 2004
+```
+
+The other is the scaled identity: the average variance on the diagonal and zero
+elsewhere. It is the estimator scikit-learn implements, and on four panels —
+one with fewer observations than assets — this one agrees with it on the
+intensity and every pinned entry to the test's bound of 1e-12, relative. It assumes nothing about correlation, and it also
+pulls the variances together, which constant correlation deliberately does not.
+That decides when it helps. On ten assets and forty observations its squared
+Frobenius error against the truth is 0.139 times constant correlation's when the
+assets are uncorrelated and equally volatile, and 2.35 times when they are
+uncorrelated with differing volatilities or share a common factor. So the
+choice is a question about the data, and the default is the one that suits
+returns.
+
+Reusing the constant-correlation code for it is a trap worth naming. That
+target is rebuilt on the unbiased convention through its correlations, putting
+every asset's own variance back on the diagonal. Applied to the identity it
+keeps the zeros and restores the variances, which is the *diagonal* target — a
+different estimator — so the identity is rescaled by `T/(T-1)` instead.
 
 The intensity is reported rather than hidden. An intensity of 0.05 says the
 sample was informative; one of 0.9 says the answer is mostly the prior and the
@@ -2210,11 +2236,12 @@ is not repeated here.
 - **The regime chain has two states.** `fit_mixture` will fit three or more
   components, but `occupation_law`, `stationary` and `horizon_mixture` describe
   a calm and a stressed state only, and refuse a longer chain.
-- **Covariance shrinkage has one target.** `ledoit_wolf` shrinks towards
-  constant correlation and takes no argument choosing anything else, such as
-  the identity or a single-factor model. `clip_spectrum` in `cleaning` is the
-  alternative on offer, which is a different estimator rather than another
-  target.
+- **Covariance shrinkage has no factor-model target.** `ledoit_wolf` shrinks
+  towards constant correlation or the scaled identity, chosen by
+  `ShrinkageTarget`, and both are built from the panel alone. The single-factor
+  target, which needs a market series beside the panel, is not among them.
+  `clip_spectrum` in `cleaning` is the other estimator on offer, which is a
+  different method rather than another target.
 
 ## Development
 
