@@ -42,7 +42,7 @@ from .contributions import (
     volatility_contributions,
 )
 from .copula import Family, Marginal, copula_risk
-from .covariance import ledoit_wolf, sample_covariance
+from .covariance import ShrinkageTarget, blend, ledoit_wolf, sample_covariance
 from .drawdown import calmar, maximum_drawdown, sortino, ulcer_index
 from .entropy import (
     mean_view,
@@ -246,10 +246,35 @@ def parse_weights(text: str | None, panel: Panel) -> list[float]:
     return out
 
 
-def covariance_of(panel: Panel, *, shrink: bool) -> list[list[float]]:
-    if shrink:
-        return ledoit_wolf(panel).matrix
+def covariance_of(
+    panel: Panel, *, shrink: bool, target: str | None = None
+) -> list[list[float]]:
+    """The sample covariance, or the Ledoit-Wolf one when asked for either way.
+
+    Naming a target is asking for shrinkage, so ``--shrink-target`` alone is
+    enough; ``--shrink`` alone takes the library's default target.
+    """
+    if shrink or target is not None:
+        if target is None:
+            return ledoit_wolf(panel).matrix
+        return ledoit_wolf(panel, target=target).matrix
     return sample_covariance(panel)
+
+
+def fixed_shrinkage(panel: Panel, intensity: float, target: str | None) -> list[list[float]]:
+    """The sample blended towards a Ledoit-Wolf target at a stated intensity.
+
+    For a command whose ``--shrink`` takes a number. Passing that number to
+    :func:`covariance_of` would read it as a flag, so every nonzero value would
+    give the same matrix — the estimated optimum — and the figure typed would
+    change nothing.
+    """
+    if not (0.0 <= intensity <= 1.0):
+        raise InputError(f"--shrink is an intensity in [0, 1], got {intensity!r}")
+    if intensity == 0.0:
+        return sample_covariance(panel)
+    estimate = ledoit_wolf(panel) if target is None else ledoit_wolf(panel, target=target)
+    return blend(estimate.sample, estimate.target, intensity)
 
 
 # -- output ------------------------------------------------------------------
@@ -281,7 +306,7 @@ def command_risk(arguments: argparse.Namespace, stream: TextIO) -> dict[str, Any
     parsed = read_table(arguments.returns)
     panel = parsed.panel
     weights = parse_weights(arguments.weights, panel)
-    covariance = covariance_of(panel, shrink=arguments.shrink)
+    covariance = covariance_of(panel, shrink=arguments.shrink, target=arguments.shrink_target)
     risk = portfolio_risk(
         weights,
         covariance,
@@ -342,7 +367,7 @@ def command_contributions(arguments: argparse.Namespace, stream: TextIO) -> dict
     parsed = read_table(arguments.returns)
     panel = parsed.panel
     weights = parse_weights(arguments.weights, panel)
-    covariance = covariance_of(panel, shrink=arguments.shrink)
+    covariance = covariance_of(panel, shrink=arguments.shrink, target=arguments.shrink_target)
     allocation = (
         volatility_contributions(weights, covariance, names=panel.names)
         if arguments.measure == "volatility"
@@ -428,7 +453,7 @@ def command_contributions(arguments: argparse.Namespace, stream: TextIO) -> dict
 def command_parity(arguments: argparse.Namespace, stream: TextIO) -> dict[str, Any]:
     parsed = read_table(arguments.returns)
     panel = parsed.panel
-    covariance = covariance_of(panel, shrink=arguments.shrink)
+    covariance = covariance_of(panel, shrink=arguments.shrink, target=arguments.shrink_target)
     result = risk_parity(covariance, names=panel.names)
     payload = {
         "weights": dict(zip(result.names, result.weights, strict=True)),
@@ -504,7 +529,7 @@ def command_curvature(arguments: argparse.Namespace, stream: TextIO) -> dict[str
     """
     parsed = read_table(arguments.returns)
     panel = parsed.panel
-    covariance = covariance_of(panel, shrink=arguments.shrink)
+    covariance = covariance_of(panel, shrink=arguments.shrink, target=arguments.shrink_target)
     size = len(panel.names)
     delta = [float(piece) for piece in arguments.delta.split(",")]
     if len(delta) != size:
@@ -2284,7 +2309,7 @@ def command_bounds(arguments: argparse.Namespace, stream: TextIO) -> dict[str, A
         confidence=arguments.confidence,
         points=arguments.points,
     )
-    covariance = covariance_of(panel, shrink=arguments.shrink)
+    covariance = fixed_shrinkage(panel, arguments.shrink, arguments.shrink_target)
     fitted = portfolio_risk(weights, covariance, confidence=arguments.confidence)
     low, high = bounds.attainable
     span = high - low
@@ -2459,7 +2484,7 @@ def command_worst_case(arguments: argparse.Namespace, stream: TextIO) -> dict[st
     """
     parsed = read_table(arguments.returns)
     panel = parsed.panel
-    covariance = covariance_of(panel, shrink=arguments.shrink)
+    covariance = covariance_of(panel, shrink=arguments.shrink, target=arguments.shrink_target)
     size = len(panel.names)
     delta = [float(piece) for piece in arguments.delta.split(",")]
     if len(delta) != size:
@@ -2731,6 +2756,13 @@ def build_parser() -> argparse.ArgumentParser:
                 "--shrink",
                 action="store_true",
                 help="use the Ledoit-Wolf shrinkage covariance instead of the sample one",
+            )
+            sub.add_argument(
+                "--shrink-target",
+                choices=[member.value for member in ShrinkageTarget],
+                default=None,
+                help="what the shrinkage pulls towards, and implies --shrink "
+                "(default: constant_correlation)",
             )
 
     risk = subparsers.add_parser("risk", help="value at risk and expected shortfall")
@@ -3192,7 +3224,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--shrink",
         type=float,
         default=0.0,
-        help="shrinkage for the covariance the fitted comparison uses",
+        help="shrinkage intensity in [0, 1] for the covariance the fitted comparison "
+        "uses: 0 is the sample, 1 the target (default: 0)",
+    )
+    limits.add_argument(
+        "--shrink-target",
+        choices=[member.value for member in ShrinkageTarget],
+        default=None,
+        help="what --shrink pulls towards (default: constant_correlation)",
     )
 
     cleaned = subparsers.add_parser(
